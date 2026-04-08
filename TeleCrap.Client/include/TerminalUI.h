@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include <corecrt.h>
+#include <ctime>
 
 #include <telecrap/Models.h>
 #include <telecrap/Transport.h>

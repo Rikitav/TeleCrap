@@ -1,23 +1,22 @@
 CXX = g++
-CXXFLAGS = -std=c++20 -Wall -O2 -DSOL_USING_CXX_LUA=1 -DSOL_ALL_SAFETIES_ON=1
+CC = gcc
 
-INCLUDES = -I../TeleCrap.Shared/include -I../TeleCrap.Libs.SQLite/include -I../TeleCrap.Libs.Sol/include
+CXXFLAGS = -std=c++20 -Wall -O2 -DSOL_USING_CXX_LUA=1 -DSOL_ALL_SAFETIES_ON=1
+CFLAGS = -Wall -O2
+
+INCLUDES = -I../TeleCrap.Shared/include -I../Telecrap.Libs.SQLite/include -I../Telecrap.Libs.Sol/include
 
 LDFLAGS = -lpthread -ldl -lm
 
 SRCS_CXX = $(wildcard ./src/*.cpp)
 SRCS_CXX += $(wildcard ../TeleCrap.Shared/*.cpp)
-SRCS_CXX += $(wildcard ../TeleCrap.Libs.SQLite/*.cpp)
-SRCS_CXX += $(wildcard ../TeleCrap.Libs.Sol/*.cpp)
+SRCS_CXX += $(wildcard ../Telecrap.Libs.SQLite/src/*.cpp)
+SRCS_CXX += $(wildcard ../Telecrap.Libs.Sol/src/*.cpp)
 
-SRCS_C = $(wildcard ./src/*.c)
-SRCS_C += $(wildcard ../TeleCrap.Shared/*.c)
-SRCS_C += $(wildcard ../TeleCrap.Libs.SQLite/*.c)
-SRCS_C += $(filter-out ../TeleCrap.Libs.Sol/lua.c ../TeleCrap.Libs.Sol/luac.c, $(wildcard ../TeleCrap.Libs.Sol/*.c))
+SRCS_C_SQLITE = $(wildcard ../Telecrap.Libs.SQLite/src/*.c)
+SRCS_C_LUA = $(wildcard ../Telecrap.Libs.Sol/src/*.c)
 
-OBJS_CXX = $(SRCS_CXX:.cpp=.o)
-OBJS_C = $(SRCS_C:.c=.o)
-OBJS = $(OBJS_CXX) $(OBJS_C)
+OBJS = $(SRCS_CXX:.cpp=.o) $(SRCS_C_SQLITE:.c=.o) $(SRCS_C_LUA:.c=.o)
 
 TARGET = telecrap_server
 
@@ -29,8 +28,11 @@ $(TARGET): $(OBJS)
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
-%.o: %.c
+../Telecrap.Libs.Sol/src/%.o: ../Telecrap.Libs.Sol/src/%.c
 	$(CXX) $(CXXFLAGS) -x c++ $(INCLUDES) -c $< -o $@
+
+../Telecrap.Libs.SQLite/src/%.o: ../Telecrap.Libs.SQLite/src/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
 	rm -f $(OBJS) $(TARGET)

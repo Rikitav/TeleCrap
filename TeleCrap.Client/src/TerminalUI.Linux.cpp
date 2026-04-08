@@ -9,7 +9,7 @@
 #include <ctime>
 #include <atomic>
 
-#include "TerminalUI.h"
+#include "../include/TerminalUI.h"
 
 static std::atomic<bool> needRedraw{ false };
 
@@ -96,7 +96,7 @@ static void handleByteLinux(unsigned char b)
 
 void TerminalUI::run(Transport* transportSocket)
 {
-    TerminalUI::hookRender();
+    TerminalUI::hookRender(transportSocket);
 
     TermState ts;
     struct sigaction sa {};
@@ -111,12 +111,14 @@ void TerminalUI::run(Transport* transportSocket)
     while (TerminalUI::isRunning())
     {
         if (needRedraw.exchange(false))
-            TerminalUI::hookRender();
+            TerminalUI::hookRender(transportSocket);
 
         pollfd pfd{};
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
-        if (poll(&pfd, 1, 50) <= 0) continue;
+        if (poll(&pfd, 1, 50) <= 0)
+            continue;
+            continue;
 
         unsigned char buf[64]{};
         const ssize_t n = ::read(STDIN_FILENO, buf, sizeof(buf));

@@ -113,7 +113,7 @@ void ServerCLI::run(Transport* transportSocket)
     sigaction(SIGWINCH, &sa, nullptr);
 
     enableRaw(ts);
-    ServerCLI::platformWriteStdout("\x1b[?25l");
+    std::cout << "\x1b[?25l";
 
     while (ServerCLI::isRunning())
     {
@@ -132,7 +132,7 @@ void ServerCLI::run(Transport* transportSocket)
             handleByteLinux(buf[i]);
     }
 
-    //ServerCLI::platformWriteStdout("\x1b[0m\x1b[?25h\n");
+    std::cout << "\x1b[0m\x1b[?25h\n";
     disableRaw(ts);
 }
 

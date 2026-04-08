@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "telecrap/Transport.h"
 #include "telecrap/Protocol.h"
