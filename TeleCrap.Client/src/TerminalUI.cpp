@@ -23,49 +23,73 @@
 #include "../include/TerminalUI.h"
 #include "../include/MemoryCache.h"
 
-enum class UIMode { Chat, ChatList };
+#define ignore catch (...) {}
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#define min(a,b) (((a) < (b)) ? (a) : (b))
 
-static std::mutex uiMutex;
-static Transport* transport = nullptr;
+enum class UiMode
+{
+    Chat,
+    ChatList
+};
 
 // "Пустой" чат-заглушка, чтобы UI мог рендериться до выбора реального чата.
-// Id = SYSTEM_FROMID используется как гарантированно невалидный id пользовательского чата.
-static ChatMemory idleChat{ .ChatInfo = { .Id = SYSTEM_FROMID, .Name = std::string_view("no_chat") } };
-static std::optional<ChatMemory*> currentChat = &idleChat;
-static std::optional<User> currentUser = std::nullopt;
+// Id = SYSTEM_FROMID используется как гарантированно невалидный идентификатор пользовательского чата.
+static ChatMemory idleChatPlaceholder
+{
+    .ChatInfo =
+    {
+        .Id = SYSTEM_FROMID,
+        .Name = std::string_view("no_chat")
+    }
+};
 
-static std::atomic<bool> running{ false };
-static std::string inputBuffer;
-static int scrollOffset = 0;
-static int chatHeight = 0;
+static std::recursive_mutex interfaceMutex;
+static Transport* activeTransport = nullptr;
+
+static std::optional<ChatMemory*> currentActiveChat = &idleChatPlaceholder;
+static std::optional<User> currentLoggedInUser = std::nullopt;
+
+static std::atomic<bool> isApplicationRunning{ false };
+static std::string userInputBuffer;
+static int messageScrollOffset = 0;
+static int calculatedChatHeight = 0;
 
 // Локальная модель "непрочитанных" сообщений.
-// Сервер не хранит read-state: счетчики формируются на клиенте из потока UpdateType::Message
-// и сбрасываются при открытии соответствующего чата.
-static std::unordered_map<chatid_t, uint32_t> unreadByChat;
-static std::unordered_map<chatid_t, std::string> unreadChatLabels;
+// Сервер не хранит состояние прочтения: счетчики формируются на клиенте 
+// из потока UpdateType::Message и сбрасываются при открытии соответствующего чата.
+static std::unordered_map<chatid_t, uint32_t> unreadMessageCountByChatId;
+static std::unordered_map<chatid_t, std::string> unreadChatNamesByChatId;
 
-static UIMode uiMode = UIMode::Chat;
-static std::vector<Chat> chatList{};
-static int chatListSelected = 0;
+static UiMode currentUiMode = UiMode::Chat;
+static std::vector<Chat> cachedChatList{};
+static int selectedChatListIndex = 0;
 
-static std::vector<std::string> addonCommandsCache{};
-static bool addonCommandsLoaded = false;
+static std::vector<std::string> cachedAddonCommands{};
+static bool areAddonCommandsLoaded = false;
 
-// Все функции с суффиксом *Unlocked предполагают, что uiMutex уже захвачен.
-static void renderUnlocked();
-static void addMessageUnlocked(const Message& message);
-static void setChatListMode(bool enabled);
-static bool selectChatAfterLoad(const Chat& chat);
-static bool isLoggedIn() { return currentUser.has_value(); }
-static bool isChatting() { return currentChat.has_value(); }
+// Все функции с суффиксом *Unlocked предполагают, что interfaceMutex уже захвачен.
+static void renderInterfaceUnlocked();
+static void appendMessageToChatUnlocked(const Message& incomingMessage);
+static void toggleChatListMode(bool isEnabled);
+static bool loadAndSelectChat(const Chat& targetChat);
+static bool isUserLoggedIn();
+static bool isUserInActiveChat();
 
-static const char* ansiNotifyStyle() { return "\x1b[1m\x1b[93m"; }
-static const char* ansiReset()       { return "\x1b[0m"; }
-
-static const char* ansiFg(Color c)
+static const char* getAnsiNotificationStyle()
 {
-    switch (c)
+    return "\x1b[1m\x1b[93m";
+}
+
+static const char* getAnsiResetStyle()
+{
+    return "\x1b[0m";
+}
+
+// Преобразует перечисление Color в ANSI-код цвета текста.
+static const char* getAnsiColorForeground(Color targetColor)
+{
+    switch (targetColor)
     {
         case Color::BLACK:          return "\x1b[30m";
         case Color::DARK_CYAN:      return "\x1b[36m";
@@ -80,128 +104,148 @@ static const char* ansiFg(Color c)
     }
 }
 
-static std::string clipUtf8Bytes(std::string_view s, size_t maxBytes)
+// Обрезает строку по количеству байт, не разрывая UTF-8 символы посередине.
+static std::string truncateUtf8StringByBytes(std::string_view originalString, size_t maxAllowedBytes)
 {
-    // Обрезка по байтам, но без разрезания UTF-8 codepoint'а пополам.
-    if (s.size() <= maxBytes)
-        return std::string(s);
+    if (originalString.size() <= maxAllowedBytes)
+        return std::string(originalString);
 
-    if (maxBytes <= 3)
+    if (maxAllowedBytes <= 3)
         return "...";
 
-    size_t cut = maxBytes - 3;
-    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
-    return std::string(s.substr(0, cut)) + "...";
+    // Смещаем позицию обрезки влево, чтобы не разрезать UTF-8 символ.
+    size_t cutPosition = maxAllowedBytes - 3;
+    while (cutPosition > 0 && (static_cast<unsigned char>(originalString[cutPosition]) & 0xC0) == 0x80)
+        --cutPosition;
+
+    return std::string(originalString.substr(0, cutPosition)) + "...";
 }
 
-// Для TUI: одна UTF-8 codepoint ≈ одна колонка (кириллица и латиница).
-static size_t utf8CountCodepoints(std::string_view s)
+// Подсчитывает количество символов (кодовых точек) в UTF-8 строке.
+// Для терминала одна кодовая точка обычно занимает одну колонку.
+static size_t countUtf8Codepoints(std::string_view targetString)
 {
-    size_t n = 0;
-    for (size_t i = 0; i < s.size(); )
+    size_t codepointCount = 0;
+    for (size_t byteIndex = 0; byteIndex < targetString.size(); )
     {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t adv = 1;
-        if (c < 0x80)
-            adv = 1;
-        else if ((c & 0xE0) == 0xC0)
-            adv = 2;
-        else if ((c & 0xF0) == 0xE0)
-            adv = 3;
-        else if ((c & 0xF8) == 0xF0)
-            adv = 4;
-        if (i + adv > s.size())
+        const unsigned char currentByte = static_cast<unsigned char>(targetString[byteIndex]);
+        size_t byteAdvanceAmount = 1;
+
+        if (currentByte < 0x80)                 byteAdvanceAmount = 1;
+        else if ((currentByte & 0xE0) == 0xC0)  byteAdvanceAmount = 2;
+        else if ((currentByte & 0xF0) == 0xE0)  byteAdvanceAmount = 3;
+        else if ((currentByte & 0xF8) == 0xF0)  byteAdvanceAmount = 4;
+
+        if (byteIndex + byteAdvanceAmount > targetString.size())
             break;
-        i += adv;
-        ++n;
+
+        byteIndex += byteAdvanceAmount;
+        ++codepointCount;
     }
-    return n;
+
+    return codepointCount;
 }
 
-static std::string utf8TakeCodepoints(std::string_view s, size_t maxCp)
+// Возвращает строку, содержащую указанное максимальное количество кодовых точек UTF-8.
+static std::string extractMaxUtf8Codepoints(std::string_view originalString, size_t maxCodepoints)
 {
-    if (maxCp == 0)
+    if (maxCodepoints == 0)
         return {};
 
-    size_t n = 0;
-    size_t end = 0;
-    for (size_t i = 0; i < s.size() && n < maxCp; )
+    size_t codepointCount = 0;
+    size_t endByteIndex = 0;
+
+    for (size_t byteIndex = 0; byteIndex < originalString.size() && codepointCount < maxCodepoints; )
     {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t adv = 1;
-        if (c < 0x80)
-            adv = 1;
-        else if ((c & 0xE0) == 0xC0)
-            adv = 2;
-        else if ((c & 0xF0) == 0xE0)
-            adv = 3;
-        else if ((c & 0xF8) == 0xF0)
-            adv = 4;
-        if (i + adv > s.size())
+        const unsigned char currentByte = static_cast<unsigned char>(originalString[byteIndex]);
+        size_t byteAdvanceAmount = 1;
+
+        if (currentByte < 0x80)                 byteAdvanceAmount = 1;
+        else if ((currentByte & 0xE0) == 0xC0)  byteAdvanceAmount = 2;
+        else if ((currentByte & 0xF0) == 0xE0)  byteAdvanceAmount = 3;
+        else if ((currentByte & 0xF8) == 0xF0)  byteAdvanceAmount = 4;
+
+        if (byteIndex + byteAdvanceAmount > originalString.size())
             break;
-        i += adv;
-        ++n;
-        end = i;
+
+        byteIndex += byteAdvanceAmount;
+        ++codepointCount;
+        endByteIndex = byteIndex;
     }
-    return std::string(s.substr(0, end));
+
+    return std::string(originalString.substr(0, endByteIndex));
 }
 
-static void utf8PopBack(std::string& s)
+// Удаляет последний UTF-8 символ из строки (аналог Backspace).
+static void removeLastUtf8Codepoint(std::string& targetString)
 {
-    // Backspace для UTF-8: отматываем до начала последнего codepoint'а.
-    if (s.empty())
+    if (targetString.empty())
         return;
 
-    size_t i = s.size();
-    while (i > 0 && (static_cast<unsigned char>(s[i - 1]) & 0xC0) == 0x80) --i;
-    
-    if (i == 0)
-        s.clear();
+    size_t cutPosition = targetString.size();
+    while (cutPosition > 0 && (static_cast<unsigned char>(targetString[cutPosition - 1]) & 0xC0) == 0x80)
+        --cutPosition;
+
+    if (cutPosition == 0)
+    {
+        targetString.clear();
+    }
     else
-        s.erase(i - 1);
+    {
+        targetString.erase(cutPosition - 1);
+    }
 }
 
-static std::string joinTokens(const std::vector<std::string>& tokens, size_t from)
+// Склеивает токены команды обратно в единую строку, начиная с указанного индекса.
+static std::string joinStringTokens(const std::vector<std::string>& commandTokens, size_t startingIndex)
 {
-    // Склейка аргументов команды обратно в строку (для команд с произвольным текстом).
-    std::string s;
-    for (size_t i = from; i < tokens.size(); ++i)
+    std::string resultString;
+    for (size_t tokenIndex = startingIndex; tokenIndex < commandTokens.size(); ++tokenIndex)
     {
-        if (i > from)
-            s += ' ';
+        if (tokenIndex > startingIndex)
+            resultString += ' ';
 
-        s += tokens[i];
+        resultString += commandTokens[tokenIndex];
     }
 
-    return s;
+    return resultString;
 }
 
-static bool startsWithCaseInsensitiveAscii(std::string_view s, std::string_view prefix)
+// Регистронезависимая проверка на то, начинается ли строка с заданного префикса.
+static bool checkStringStartsWithCaseInsensitive(std::string_view targetString, std::string_view expectedPrefix)
 {
-    if (prefix.size() > s.size())
+    if (expectedPrefix.size() > targetString.size())
         return false;
 
-    for (size_t i = 0; i < prefix.size(); ++i)
+    for (size_t characterIndex = 0; characterIndex < expectedPrefix.size(); ++characterIndex)
     {
-        unsigned char a = static_cast<unsigned char>(s[i]);
-        unsigned char b = static_cast<unsigned char>(prefix[i]);
-        if (a >= 'A' && a <= 'Z') a = static_cast<unsigned char>(a - 'A' + 'a');
-        if (b >= 'A' && b <= 'Z') b = static_cast<unsigned char>(b - 'A' + 'a');
-        if (a != b)
+        unsigned char stringChar = static_cast<unsigned char>(targetString[characterIndex]);
+        unsigned char prefixChar = static_cast<unsigned char>(expectedPrefix[characterIndex]);
+
+        if (stringChar >= 'A' && stringChar <= 'Z')
+            stringChar = static_cast<unsigned char>(stringChar - 'A' + 'a');
+
+        if (prefixChar >= 'A' && prefixChar <= 'Z')
+            prefixChar = static_cast<unsigned char>(prefixChar - 'A' + 'a');
+
+        if (stringChar != prefixChar)
             return false;
     }
+
     return true;
 }
 
-struct SlashCommandInfo
+struct SlashCommandMetadata
 {
-    std::string Name; // без ведущего '/'
+    std::string Name;
     std::string Description;
 };
 
-static std::vector<SlashCommandInfo> localSlashCommands()
+// Возвращает список встроенных клиентских команд.
+static std::vector<SlashCommandMetadata> getLocalSlashCommandsList()
 {
-    return {
+    return
+    {
         { "help", "показать список команд" },
         { "register", "создать аккаунт: /register user pass" },
         { "login", "войти: /login user pass" },
@@ -217,131 +261,154 @@ static std::vector<SlashCommandInfo> localSlashCommands()
     };
 }
 
-static void requestAddonCommandsIntoCache()
+// Запрашивает команды расширений с сервера и кеширует их.
+static void fetchAndCacheAddonCommands()
 {
-    if (transport == nullptr || !isLoggedIn())
+    if (activeTransport == nullptr || !isUserLoggedIn())
         return;
 
     try
     {
-        std::vector<Responce> responces = Protocol::SendRequestList(
-            *transport,
-            Request::CreateGetAddonCommands(transport->AccessToken),
-            [](Responce& responce) { return responce.GetAddonCommands.RemainingCommands; });
+        Request addonCommandsRequest = Request::CreateGetAddonCommands(activeTransport->AccessToken);
+        std::vector<Responce> serverResponses = Protocol::SendRequestList(*activeTransport, addonCommandsRequest,
+            [](Responce& response) { return response.GetAddonCommands.RemainingCommands; });
 
-        std::vector<std::string> fresh;
-        fresh.reserve(responces.size());
-        for (Responce& r : responces)
-            fresh.push_back(std::string(r.GetAddonCommands.CurrentCommand.buffer));
+        std::vector<std::string> fetchedCommands;
+        fetchedCommands.reserve(serverResponses.size());
 
-        std::sort(fresh.begin(), fresh.end());
-        fresh.erase(std::unique(fresh.begin(), fresh.end()), fresh.end());
+        for (Responce& currentResponse : serverResponses)
+            fetchedCommands.push_back(std::string(currentResponse.GetAddonCommands.CurrentCommand.buffer));
 
-        std::lock_guard<std::mutex> lk(uiMutex);
-        addonCommandsCache = std::move(fresh);
-        addonCommandsLoaded = true;
+        std::sort(fetchedCommands.begin(), fetchedCommands.end());
+        fetchedCommands.erase(std::unique(fetchedCommands.begin(), fetchedCommands.end()), fetchedCommands.end());
+
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+        cachedAddonCommands = std::move(fetchedCommands);
+        areAddonCommandsLoaded = true;
     }
     catch (...)
     {
-        // Не критично для работы UI: подсказка просто будет без серверных команд.
-        std::lock_guard<std::mutex> lk(uiMutex);
-        addonCommandsLoaded = true;
+        // В случае ошибки просто не будем отображать серверные команды в подсказках.
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+        areAddonCommandsLoaded = true;
     }
 }
 
-// --- СЕТЬ И СОСТОЯНИЕ ---
-static uint32_t totalUnreadCount()
+// Возвращает общее количество непрочитанных сообщений во всех чатах.
+static uint32_t calculateTotalUnreadMessages()
 {
-    uint32_t n = 0;
-    for (const auto& e : unreadByChat)
-        n += e.second;
+    uint32_t totalMessages = 0;
+    for (const auto& chatEntry : unreadMessageCountByChatId)
+        totalMessages += chatEntry.second;
 
-    return n;
+    return totalMessages;
 }
 
-static void clearUnreadForChat(chatid_t id)
+// Сбрасывает счетчик непрочитанных сообщений для указанного чата.
+static void clearUnreadMessagesForChatId(chatid_t targetChatId)
 {
-    unreadByChat.erase(id);
-    unreadChatLabels.erase(id);
+    unreadMessageCountByChatId.erase(targetChatId);
+    unreadChatNamesByChatId.erase(targetChatId);
 }
 
-static void setChatListMode(bool enabled)
+// Переключает режим отображения интерфейса между чатом и списком чатов.
+static void toggleChatListMode(bool isEnabled)
 {
-    uiMode = enabled ? UIMode::ChatList : UIMode::Chat;
-    if (chatListSelected < 0)
-        chatListSelected = 0;
+    currentUiMode = isEnabled ? UiMode::ChatList : UiMode::Chat;
+    if (selectedChatListIndex < 0)
+        selectedChatListIndex = 0;
 
-    if (!chatList.empty() && chatListSelected >= static_cast<int>(chatList.size()))
-        chatListSelected = static_cast<int>(chatList.size()) - 1;
+    if (!cachedChatList.empty() && selectedChatListIndex >= static_cast<int>(cachedChatList.size()))
+        selectedChatListIndex = static_cast<int>(cachedChatList.size()) - 1;
 }
 
-static ChatMemory* requestChatMemory(const Chat& chat)
+static bool isUserLoggedIn()
+{
+    return currentLoggedInUser.has_value();
+}
+
+static bool isUserInActiveChat()
+{
+    return currentActiveChat.has_value();
+}
+
+// Запрашивает историю сообщений и участников для указанного чата.
+static ChatMemory* fetchChatHistoryAndMembers(const Chat& targetChat)
 {
     try
     {
-        std::vector<Responce> messages = Protocol::SendRequestList(
-            *transport, Request::CreateGetChatHistory(transport->AccessToken, chat.Id),
-            [](Responce& responce) { return responce.GetChatHistory.RemainingMessages; });
+        Request historyRequest = Request::CreateGetChatHistory(activeTransport->AccessToken, targetChat.Id);
+        std::vector<Responce> messageResponses = Protocol::SendRequestList(*activeTransport, historyRequest,
+            [](Responce& response) { return response.GetChatHistory.RemainingMessages; });
 
-        std::vector<Responce> members = Protocol::SendRequestList(
-            *transport, Request::CreateGetChatMembers(transport->AccessToken, chat.Id),
-            [](Responce& responce) { return responce.GetChatMembers.RemainingUsers; });
+        Request membersRequest = Request::CreateGetChatMembers(activeTransport->AccessToken, targetChat.Id);
+        std::vector<Responce> memberResponses = Protocol::SendRequestList(*activeTransport, membersRequest,
+            [](Responce& response) { return response.GetChatMembers.RemainingUsers; });
 
-        ChatMemory* chatMemory = MemoryCache::createChatMemory(chat);
-        for (const Responce& message : messages)
-            MemoryCache::storeMessageToChat(chat.Id, message.GetChatHistory.CurrentMessage, false);
+        ChatMemory* allocatedChatMemory = MemoryCache::createChatMemory(targetChat);
+        for (const Responce& messageResponse : messageResponses)
+            MemoryCache::storeMessageToChat(targetChat.Id, messageResponse.GetChatHistory.CurrentMessage, false);
 
-        for (const Responce& member : members)
-            MemoryCache::addMemberToChat(chat.Id, member.GetChatMembers.CurrentUser);
+        for (const Responce& memberResponse : memberResponses)
+            MemoryCache::addMemberToChat(targetChat.Id, memberResponse.GetChatMembers.CurrentUser);
 
-        chatMemory->MessagesLoaded = true;
-        return chatMemory;
+        allocatedChatMemory->MessagesLoaded = true;
+        return allocatedChatMemory;
     }
     catch (const std::runtime_error&)
     {
-        MemoryCache::removeChatMemory(chat.Id);
+        MemoryCache::removeChatMemory(targetChat.Id);
         throw;
     }
 }
 
-static void requestChatListIntoCache()
-{
-    std::vector<Responce> responces = Protocol::SendRequestList(
-        *transport, Request::CreateGetChatList(transport->AccessToken),
-        [](Responce& responce) { return responce.GetChatList.RemainingChats; });
-
-    std::vector<Chat> fresh;
-    for (Responce& responce : responces)
-    {
-        const Chat& ch = responce.GetChatList.CurrentChat;
-        fresh.push_back(ch);
-
-        if (!MemoryCache::getChatMemory(ch.Id).has_value())
-            MemoryCache::createChatMemory(ch);
-    }
-
-    std::lock_guard<std::mutex> lk(uiMutex);
-    chatList = std::move(fresh);
-    if (chatListSelected >= static_cast<int>(chatList.size()))
-        chatListSelected = static_cast<int>(chatList.size()) - 1;
-
-    if (chatListSelected < 0)
-        chatListSelected = 0;
-}
-
-static bool selectChatAfterLoad(const Chat& chat)
+// Обновляет локальный кэш списка доступных пользователю чатов.
+static void fetchAndCacheChatList()
 {
     try
     {
-        std::optional<ChatMemory*> chatMemory = MemoryCache::getChatMemory(chat.Id);
-        ChatMemory* cm = (chatMemory.has_value() && chatMemory.value()->MessagesLoaded) 
-            ? chatMemory.value()
-            : requestChatMemory(chat);
+        Request chatListRequest = Request::CreateGetChatList(activeTransport->AccessToken);
+        std::vector<Responce> serverResponses = Protocol::SendRequestList(*activeTransport, chatListRequest,
+            [](Responce& response) { return response.GetChatList.RemainingChats; });
+
+        std::vector<Chat> fetchedChats;
+        for (Responce& responseData : serverResponses)
+        {
+            const Chat& currentChatModel = responseData.GetChatList.CurrentChat;
+            fetchedChats.push_back(currentChatModel);
+
+            if (!MemoryCache::getChatMemory(currentChatModel.Id).has_value())
+                MemoryCache::createChatMemory(currentChatModel);
+        }
+
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+        cachedChatList = std::move(fetchedChats);
+
+        if (selectedChatListIndex >= static_cast<int>(cachedChatList.size()))
+            selectedChatListIndex = static_cast<int>(cachedChatList.size()) - 1;
+
+        if (selectedChatListIndex < 0)
+            selectedChatListIndex = 0;
+    }
+    ignore
+}
+
+// Загружает данные чата и устанавливает его как активный.
+static bool loadAndSelectChat(const Chat& targetChat)
+{
+    try
+    {
+        std::optional<ChatMemory*> cachedMemory = MemoryCache::getChatMemory(targetChat.Id);
+
+        ChatMemory* targetChatMemory = (cachedMemory.has_value() && cachedMemory.value()->MessagesLoaded)
+            ? cachedMemory.value()
+            : fetchChatHistoryAndMembers(targetChat);
 
         {
-            std::lock_guard<std::mutex> lk(uiMutex);
-            currentChat = cm;
-            clearUnreadForChat(chat.Id);
+            std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+            currentActiveChat = targetChatMemory;
+            clearUnreadMessagesForChatId(targetChat.Id);
         }
 
         TerminalUI::drawUI();
@@ -349,700 +416,955 @@ static bool selectChatAfterLoad(const Chat& chat)
     }
     catch (const disconnected_error&)
     {
-        running = false;
+        isApplicationRunning = false;
         return true;
     }
-    catch (const std::runtime_error& err)
+    catch (const std::runtime_error& executionError)
     {
-        TerminalUI::addMessage(std::string("Ошибка загрузки: ") + err.what());
+        TerminalUI::addMessage(std::string("Ошибка загрузки: ") + executionError.what());
         TerminalUI::drawUI();
         return false;
     }
 }
 
-bool TerminalUI::isRunning() { return running.load(); }
-void TerminalUI::stopRunning() { running = false; }
-
-void TerminalUI::hookRender(Transport* transportSocket)
+bool TerminalUI::isRunning()
 {
-    std::lock_guard<std::mutex> lock(uiMutex);
-
-    transport = transportSocket;
-    if (transport != nullptr)
-        running = true;
-
-    renderUnlocked();
+    return isApplicationRunning.load();
 }
 
-void TerminalUI::hookInputChar(char c)
+void TerminalUI::stopRunning()
 {
-    std::lock_guard<std::mutex> lk(uiMutex);
-    inputBuffer.push_back(c);
-    renderUnlocked();
+    isApplicationRunning = false;
+}
+
+void TerminalUI::hookRender(Transport* activeSocket)
+{
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+    activeTransport = activeSocket;
+    if (activeTransport != nullptr)
+        isApplicationRunning = true;
+
+    renderInterfaceUnlocked();
+}
+
+void TerminalUI::hookInputChar(char inputCharacter)
+{
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+    userInputBuffer.push_back(inputCharacter);
+    renderInterfaceUnlocked();
 }
 
 void TerminalUI::hookBackspace()
 {
-    std::lock_guard<std::mutex> lk(uiMutex);
-    if (!inputBuffer.empty())
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+    if (!userInputBuffer.empty())
     {
-        utf8PopBack(inputBuffer);
-        renderUnlocked();
+        removeLastUtf8Codepoint(userInputBuffer);
+        renderInterfaceUnlocked();
     }
 }
 
 void TerminalUI::hookArrowUp()
 {
-    std::lock_guard<std::mutex> lk(uiMutex);
-    if (uiMode == UIMode::ChatList)
-        chatListSelected = (std::max)(0, chatListSelected - 1);
-    else
-        scrollOffset = (std::min)(scrollOffset + 1, 50);
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
 
-    renderUnlocked();
+    if (currentUiMode == UiMode::ChatList)
+    {
+        selectedChatListIndex = (std::max)(0, selectedChatListIndex - 1);
+    }
+    else
+    {
+        messageScrollOffset = (std::min)(messageScrollOffset + 1, 50);
+    }
+
+    renderInterfaceUnlocked();
 }
 
 void TerminalUI::hookArrowDown()
 {
-    std::lock_guard<std::mutex> lk(uiMutex);
-    if (uiMode == UIMode::ChatList)
-        chatListSelected = (std::min)(static_cast<int>(chatList.size()) - 1, chatListSelected + 1);
-    else
-        scrollOffset = (std::max)(scrollOffset - 1, 0);
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
 
-    renderUnlocked();
+    if (currentUiMode == UiMode::ChatList)
+    {
+        selectedChatListIndex = (std::min)(static_cast<int>(cachedChatList.size()) - 1, selectedChatListIndex + 1);
+    }
+    else
+    {
+        messageScrollOffset = (std::max)(messageScrollOffset - 1, 0);
+    }
+
+    renderInterfaceUnlocked();
 }
 
 void TerminalUI::hookEscape()
 {
-    std::lock_guard<std::mutex> lk(uiMutex);
-    if (uiMode == UIMode::ChatList)
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+    if (currentUiMode == UiMode::ChatList)
     {
-        setChatListMode(false);
-        renderUnlocked();
+        toggleChatListMode(false);
+        renderInterfaceUnlocked();
         return;
     }
 
-    running = false;
+    isApplicationRunning = false;
 }
 
 void TerminalUI::hookEnter()
 {
-    if (uiMode == UIMode::ChatList)
+    if (currentUiMode == UiMode::ChatList)
     {
-        Chat ch{};
+        Chat selectedChatModel{};
         {
-            std::lock_guard<std::mutex> lk(uiMutex);
-            if (chatList.empty())
+            std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+            if (cachedChatList.empty())
                 return;
 
-            ch = chatList[static_cast<size_t>(chatListSelected)];
-            setChatListMode(false);
+            selectedChatModel = cachedChatList[static_cast<size_t>(selectedChatListIndex)];
+            toggleChatListMode(false);
         }
 
-        selectChatAfterLoad(ch);
+        loadAndSelectChat(selectedChatModel);
         return;
     }
 
-    std::string line;
+    std::string extractedLine;
+
     {
-        std::lock_guard<std::mutex> lk(uiMutex);
-        if (inputBuffer.empty())
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+        if (userInputBuffer.empty())
             return;
 
-        line = std::move(inputBuffer);
+        extractedLine = std::move(userInputBuffer);
     }
 
-    if (!line.empty() && line[0] == '/')
+    if (!extractedLine.empty() && extractedLine[0] == '/')
     {
-        setChatListMode(false);
-        if (TerminalUI::processCommand(line))
+        toggleChatListMode(false);
+        if (TerminalUI::processCommand(extractedLine))
         {
-            inputBuffer.clear();
+            userInputBuffer.clear();
             return;
         }
     }
 
-    chatid_t chatId = 0;
+    chatid_t destinationChatId = 0;
     {
-        std::lock_guard<std::mutex> lk(uiMutex);
-        if (!isLoggedIn())
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+        if (!isUserLoggedIn())
         {
             TerminalUI::addMessage("Войдите: /login");
             return;
         }
 
-        if (!isChatting())
+        if (!isUserInActiveChat())
         {
             TerminalUI::addMessage("Выберите чат: /chat");
             return;
         }
 
-        chatId = currentChat.value()->ChatInfo.Id;
+        destinationChatId = currentActiveChat.value()->ChatInfo.Id;
     }
 
-    Responce responce = Protocol::SendRequest(*transport, Request::CreateCommitMessage(transport->AccessToken, chatId, line));
-    if (responce.Type == ResponceType::Error)
+    Request messageRequest = Request::CreateCommitMessage(activeTransport->AccessToken, destinationChatId, extractedLine);
+    Responce serverResponse = Protocol::SendRequest(*activeTransport, messageRequest);
+
+    if (serverResponse.Type == ResponceType::Error)
     {
-        TerminalUI::addMessage("Ошибка! " + std::string(responce.Error.Message.buffer));
+        TerminalUI::addMessage("Ошибка! " + std::string(serverResponse.Error.Message.buffer));
         return;
     }
 
-    MemoryCache::storeMessageToChat(currentChat.value()->ChatInfo.Id, responce.CommitMessage.MessageModel, true);
-    TerminalUI::addMessage(responce.CommitMessage.MessageModel);
+    MemoryCache::storeMessageToChat(currentActiveChat.value()->ChatInfo.Id, serverResponse.CommitMessage.MessageModel, true);
+    TerminalUI::addMessage(serverResponse.CommitMessage.MessageModel);
 }
 
-void addMessageUnlocked(const Message& message)
+// Добавляет сообщение в UI с учетом того, какой чат сейчас открыт
+void appendMessageToChatUnlocked(const Message& incomingMessage)
 {
-    const bool viewing = isChatting() && currentChat.value()->ChatInfo.Id == message.DestChat.Id;
-    const bool fromSelf = currentUser.has_value() && message.From.Id == currentUser->Id;
+    const bool isCurrentlyViewingChat = isUserInActiveChat() && currentActiveChat.value()->ChatInfo.Id == incomingMessage.DestChat.Id;
+    const bool isMessageFromSelf = currentLoggedInUser.has_value() && incomingMessage.From.Id == currentLoggedInUser->Id;
 
-    if (message.From.Id != SYSTEM_FROMID && !fromSelf && !viewing)
+    if (incomingMessage.From.Id != SYSTEM_FROMID && !isMessageFromSelf && !isCurrentlyViewingChat)
     {
-        unreadByChat[message.DestChat.Id]++;
-        unreadChatLabels[message.DestChat.Id] = MemoryCache::getChatMemory(message.DestChat.Id).value()->ChatInfo.Name;
-        renderUnlocked();
+        unreadMessageCountByChatId[incomingMessage.DestChat.Id]++;
+        unreadChatNamesByChatId[incomingMessage.DestChat.Id] = MemoryCache::getChatMemory(incomingMessage.DestChat.Id).value()->ChatInfo.Name;
+
+        renderInterfaceUnlocked();
         return;
     }
 
-    if (viewing)
+    if (isCurrentlyViewingChat)
     {
-        scrollOffset = 0;
-        renderUnlocked();
+        messageScrollOffset = 0;
+        renderInterfaceUnlocked();
     }
 }
 
-void renderUnlocked()
+// Основная функция отрисовки пользовательского интерфейса в терминал
+void renderInterfaceUnlocked()
 {
-    int width = 0, height = 0;
-    TerminalUI::platformGetScreenSize(width, height);
+    size_t terminalWidth = 0;
+    size_t terminalHeight = 0;
 
-    chatHeight = height - 5;
+    TerminalUI::platformGetScreenSize(
+        *reinterpret_cast<int*>(&terminalWidth),
+        *reinterpret_cast<int*>(&terminalHeight));
 
-    // --- Slash-command hint window ---
-    struct HintRow
+    // Рассчитываем доступную высоту для окна чата
+    calculatedChatHeight = static_cast<int>(terminalHeight - 5);
+
+    // --- Окно с подсказками для слэш-команд ---
+    struct CommandHintRow
     {
-        std::string Command;     // с ведущим '/'
-        std::string Description; // человекочитаемое описание
-        bool IsAddon = false;
+        std::string CommandString;
+        std::string CommandDescription;
+        bool IsAddonCommand = false;
     };
 
-    std::vector<HintRow> hintLines;
-    int hintBoxLines = 0;
+    std::vector<CommandHintRow> generatedHintLines;
+    int reservedHintBoxLines = 0;
+
+    const bool isTypingCommand =
+        (currentUiMode == UiMode::Chat) &&
+        (!userInputBuffer.empty()) &&
+        (userInputBuffer[0] == '/');
+
+    if (isTypingCommand)
     {
-        const bool wantHints = (uiMode == UIMode::Chat) && !inputBuffer.empty() && inputBuffer[0] == '/';
-        if (wantHints)
+        // Извлекаем только имя команды, исключая ведущий слэш и параметры
+        std::string_view commandView(userInputBuffer);
+        commandView.remove_prefix(1);
+
+        const size_t firstSpacePosition = commandView.find(' ');
+        const std::string_view typedCommandName = (firstSpacePosition == std::string_view::npos)
+            ? commandView : commandView.substr(0, firstSpacePosition);
+
+        std::unordered_set<std::string> processedCommands;
+        std::vector<CommandHintRow> potentialCandidates;
+        potentialCandidates.reserve(16);
+
+        // Ищем совпадения среди локальных команд
+        for (const SlashCommandMetadata& localCommand : getLocalSlashCommandsList())
         {
-            // Берем только имя команды (до первого пробела) без ведущего '/'
-            std::string_view sv(inputBuffer);
-            sv.remove_prefix(1);
-            const size_t sp = sv.find(' ');
-            const std::string_view typedCmd = (sp == std::string_view::npos) ? sv : sv.substr(0, sp);
-
-            std::unordered_set<std::string> seen;
-
-            std::vector<HintRow> candidates;
-            candidates.reserve(16);
-
-            for (const SlashCommandInfo& c : localSlashCommands())
+            if (checkStringStartsWithCaseInsensitive(localCommand.Name, typedCommandName) && processedCommands.insert(localCommand.Name).second)
             {
-                if (startsWithCaseInsensitiveAscii(c.Name, typedCmd) && seen.insert(c.Name).second)
-                {
-                    candidates.push_back(HintRow{
-                        .Command = "/" + c.Name,
-                        .Description = c.Description,
-                        .IsAddon = false,
-                    });
-                }
-            }
-
-            for (const std::string& c : addonCommandsCache)
-            {
-                if (startsWithCaseInsensitiveAscii(c, typedCmd) && seen.insert(c).second)
-                {
-                    candidates.push_back(HintRow{
-                        .Command = "/" + c,
-                        .Description = "addon",
-                        .IsAddon = true,
-                    });
-                }
-            }
-
-            constexpr size_t maxHints = 8;
-            if (!candidates.empty())
-            {
-                std::sort(candidates.begin(), candidates.end(), [](const HintRow& a, const HintRow& b)
+                potentialCandidates.push_back(CommandHintRow
                     {
-                        return a.Command < b.Command;
+                        .CommandString = "/" + localCommand.Name,
+                        .CommandDescription = localCommand.Description,
+                        .IsAddonCommand = false,
                     });
-
-                if (candidates.size() > maxHints)
-                    candidates.resize(maxHints);
-
-                hintLines = std::move(candidates);
-                hintBoxLines = static_cast<int>(hintLines.size()) + 2; // top+bottom
             }
+        }
+
+        // Ищем совпадения среди серверных команд (аддонов)
+        for (const std::string& addonCommand : cachedAddonCommands)
+        {
+            if (checkStringStartsWithCaseInsensitive(addonCommand, typedCommandName) && processedCommands.insert(addonCommand).second)
+            {
+                potentialCandidates.push_back(CommandHintRow
+                    {
+                        .CommandString = "/" + addonCommand,
+                        .CommandDescription = "addon",
+                        .IsAddonCommand = true,
+                    });
+            }
+        }
+
+        constexpr size_t maxAllowedHints = 8;
+        if (!potentialCandidates.empty())
+        {
+            // Сортируем подсказки по алфавиту
+            std::sort(potentialCandidates.begin(), potentialCandidates.end(), [](const CommandHintRow& itemA, const CommandHintRow& itemB)
+                {
+                    return itemA.CommandString < itemB.CommandString;
+                });
+
+            if (potentialCandidates.size() > maxAllowedHints)
+                potentialCandidates.resize(maxAllowedHints);
+
+            generatedHintLines = std::move(potentialCandidates);
+            reservedHintBoxLines = static_cast<int>(generatedHintLines.size()) + 2;
         }
     }
 
-    const int maxMsgRows = (std::max)(0, height - 6 - hintBoxLines);
-    const int innerW = (std::max)(4, width - 4);
+    // --- Подготовка параметров сетки и буфера вывода ---
+    const int maximumMessageRows = static_cast<int>(max(0, terminalHeight - 6 - reservedHintBoxLines));
+    const int innerContainerWidth = static_cast<int>(max(4, terminalWidth - 4));
 
-    std::vector<Message> chatMessages;
-    if (isChatting())
-        chatMessages = currentChat.value()->Messages;
+    std::vector<Message> currentChatMessages;
 
-    const int total = static_cast<int>(chatMessages.size());
-    const int startIndex = (std::max)(0, total - maxMsgRows - scrollOffset);
+    if (isUserInActiveChat())
+        currentChatMessages = currentActiveChat.value()->Messages;
 
-    std::string out;
-    out.reserve(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u + 256u);
-    out.append("\x1b[?25l\x1b[2J\x1b[H\x1b[40m");
+    const int totalMessageCount = static_cast<int>(currentChatMessages.size());
+    const int startMessageIndex = (std::max)(0, totalMessageCount - maximumMessageRows - messageScrollOffset);
 
-    auto horiz = [width]()
+    std::string outputBuffer;
+    outputBuffer.reserve(terminalWidth * terminalHeight * 4u + 256u);
+
+    // Скрываем курсор, очищаем экран, перемещаем каретку в начало и устанавливаем черный фон
+    outputBuffer.append("\x1b[?25l\x1b[2J\x1b[H\x1b[40m");
+
+    // Лямбда для создания горизонтального разделителя
+    auto generateHorizontalLine = [terminalWidth]()
         {
-            std::string s;
-            s.reserve(static_cast<size_t>(width));
-            s.push_back('+');
-            s.append(static_cast<size_t>(width - 2), '-');
-            s.push_back('+');
-            return s;
+            std::string lineString;
+            lineString.reserve(static_cast<size_t>(terminalWidth));
+            lineString.push_back('+');
+            lineString.append(static_cast<size_t>(terminalWidth - 2), '-');
+            lineString.push_back('+');
+            return lineString;
         };
 
-    const std::string username = isLoggedIn() ? std::string(currentUser->Name.buffer) : "not_logged";
-    const std::string chatname = isChatting() ? std::string(currentChat.value()->ChatInfo.Name.buffer) : "no_chat";
-    const std::string prompt = username + "@" + chatname + "> ";
+    const std::string displayedUsername = isUserLoggedIn() ? std::string(currentLoggedInUser->Name.buffer) : "not_logged";
+    const std::string displayedChatName = isUserInActiveChat() ? std::string(currentActiveChat.value()->ChatInfo.Name.buffer) : "no_chat";
+    const std::string inputPromptLabel = displayedUsername + "@" + displayedChatName + "> ";
 
-    if (uiMode == UIMode::Chat && isLoggedIn() && currentChat.value() == &idleChat && !chatList.empty())
-        uiMode = UIMode::ChatList;
+    // Автоматический переход в список чатов, если чат еще не выбран
+    if (currentUiMode == UiMode::Chat && isUserLoggedIn() && currentActiveChat.value() == &idleChatPlaceholder && !cachedChatList.empty())
+        currentUiMode = UiMode::ChatList;
 
-    out.append(ansiFg(Color::DARK_CYAN)).append(horiz()).append(ansiReset()).push_back('\n');
+    // --- Отрисовка верхнего колонтитула ---
+    outputBuffer.append(getAnsiColorForeground(Color::DARK_CYAN))
+        .append(generateHorizontalLine())
+        .append(getAnsiResetStyle())
+        .push_back('\n');
 
     {
-        std::string raw = isChatting() ? ("Чат: " + std::string(currentChat.value()->ChatInfo.Name.buffer)) : "TeleCrap";
-        raw = clipUtf8Bytes(raw, static_cast<size_t>(innerW));
-        out.append("\x1b[90m|\x1b[0m").append(ansiFg(Color::CYAN)).append(raw).append(ansiReset()).append("\x1b[K\33[1000C|\n");
+        std::string topHeaderRaw = isUserInActiveChat() ? ("Чат: " + std::string(currentActiveChat.value()->ChatInfo.Name.buffer)) : "TeleCrap";
+        topHeaderRaw = truncateUtf8StringByBytes(topHeaderRaw, static_cast<size_t>(innerContainerWidth));
+
+        outputBuffer.append("\x1b[90m|\x1b[0m")
+            .append(getAnsiColorForeground(Color::CYAN))
+            .append(topHeaderRaw)
+            .append(getAnsiResetStyle())
+            .append("\x1b[K\33[1000C|\n");
     }
 
-    if (uiMode == UIMode::ChatList)
+    // --- Отрисовка основного контента (Список чатов ИЛИ Сообщения) ---
+    if (currentUiMode == UiMode::ChatList)
     {
-        const int listCount = static_cast<int>(chatList.size());
-        const int visible = maxMsgRows;
-        const int top = (std::max)(0, (std::min)(chatListSelected - visible / 2, listCount - visible));
+        const int listItemsCount = static_cast<int>(cachedChatList.size());
+        const int visibleListItems = maximumMessageRows;
+        const int topListIndex = max(0, (std::min)(selectedChatListIndex - visibleListItems / 2, listItemsCount - visibleListItems));
 
-        for (int row = 0; row < maxMsgRows; ++row)
+        for (int rowOffset = 0; rowOffset < maximumMessageRows; ++rowOffset)
         {
-            const int idx = top + row;
-            out.append("\x1b[90m|\x1b[0m ");
+            const int currentItemIndex = topListIndex + rowOffset;
+            outputBuffer.append("\x1b[90m|\x1b[0m ");
 
-            if (idx >= listCount)
+            if (currentItemIndex >= listItemsCount)
             {
-                out.append("\x1b[K\33[1000C|\n");
+                outputBuffer.append("\x1b[K\33[1000C|\n");
                 continue;
             }
 
-            const Chat& ch = chatList[static_cast<size_t>(idx)];
-            const bool selected = (idx == chatListSelected);
-            std::string line = std::string(ch.Name.buffer);
-            line = clipUtf8Bytes(line, static_cast<size_t>(innerW - 2));
-            const Color chatColor = (ch.Type == ChatType::Direct) ? Color::MAGENTA : Color::CYAN;
+            const Chat& listChatModel = cachedChatList[currentItemIndex];
+            const bool isItemSelected = (currentItemIndex == selectedChatListIndex);
+            std::string chatLineText = std::string(listChatModel.Name.buffer);
 
-            if (selected)
-                out.append("\x1b[7m");
+            chatLineText = truncateUtf8StringByBytes(chatLineText, static_cast<size_t>(innerContainerWidth - 2));
+            const Color chatItemColor = (listChatModel.Type == ChatType::Direct) ? Color::MAGENTA : Color::CYAN;
 
-            out.append(ansiFg(chatColor)).append("> ").append(line).append(ansiReset());
-            if (selected)
-                out.append(ansiReset());
+            if (isItemSelected)
+                outputBuffer.append("\x1b[7m");
 
-            out.append("\x1b[K\33[1000C|\n");
+            outputBuffer.append(getAnsiColorForeground(chatItemColor))
+                .append("> ")
+                .append(chatLineText)
+                .append(getAnsiResetStyle());
+
+            if (isItemSelected)
+                outputBuffer.append(getAnsiResetStyle());
+
+            outputBuffer.append("\x1b[K\33[1000C|\n");
         }
     }
     else
     {
-        for (int row = 0; row < maxMsgRows; ++row)
+        // Отрисовка сообщений чата
+        for (int rowOffset = 0; rowOffset < maximumMessageRows; ++rowOffset)
         {
-            const int idx = startIndex + row;
-            if (idx >= total) { out.append("\x1b[90m|").append(static_cast<size_t>(width - 2), ' ').append("\x1b[0m\33[1000C|\n"); continue; }
-
-            const Message& msg = chatMessages[static_cast<size_t>(idx)];
-            std::string t = "[" + TerminalUI::platformGetTimeString(msg.Timestamp) + "] ";
-            std::string namePrefix = std::string(msg.From.Name.buffer) + ": ";
-
-            Color timeColor = Color::WHITE;
-            Color nameColor = Color::YELLOW;
-            Color textColor = Color::WHITE;
-            
-            if (msg.From.Id == SYSTEM_FROMID)
+            const int currentMessageIndex = startMessageIndex + rowOffset;
+            if (currentMessageIndex >= totalMessageCount)
             {
-                timeColor = Color::DARK_YELLOW;
-                nameColor = Color::DARK_YELLOW;
-                textColor = Color::DARK_YELLOW;
+                outputBuffer.append("\x1b[90m|")
+                    .append(static_cast<size_t>(terminalWidth - 2), ' ')
+                    .append("\x1b[0m\33[1000C|\n");
+
+                continue;
             }
-            else if (currentUser.has_value() && msg.From.Id == currentUser->Id)
+
+            const Message& messageModel = currentChatMessages[static_cast<size_t>(currentMessageIndex)];
+            std::string timeString = "[" + TerminalUI::platformGetTimeString(messageModel.Timestamp) + "] ";
+            std::string authorPrefix = std::string(messageModel.From.Name.buffer) + ": ";
+
+            Color timeStyleColor = Color::WHITE;
+            Color nameStyleColor = Color::YELLOW;
+            Color textStyleColor = Color::WHITE;
+
+            if (messageModel.From.Id == SYSTEM_FROMID)
             {
-                timeColor = Color::CYAN;
-                nameColor = Color::GREEN;
+                timeStyleColor = Color::DARK_YELLOW;
+                nameStyleColor = Color::DARK_YELLOW;
+                textStyleColor = Color::DARK_YELLOW;
+            }
+            else if (currentLoggedInUser.has_value() && messageModel.From.Id == currentLoggedInUser->Id)
+            {
+                timeStyleColor = Color::CYAN;
+                nameStyleColor = Color::GREEN;
             }
             else
             {
-                timeColor = Color::CYAN;
+                timeStyleColor = Color::CYAN;
             }
 
-            std::string body = msg.Text.buffer;
-            const size_t prefixLen = t.size() + namePrefix.size();
-            size_t innerW_sz = static_cast<size_t>(innerW);
-            body = clipUtf8Bytes(body, innerW_sz > prefixLen ? innerW_sz - prefixLen : 0) + " ";
+            std::string messageBodyText = messageModel.Text.buffer;
+            const size_t combinedPrefixLength = timeString.size() + authorPrefix.size();
+            size_t containerWidthSizeT = static_cast<size_t>(innerContainerWidth);
 
-            out.append("\x1b[90m|\x1b[0m ").append(ansiFg(timeColor)).append(t).append(ansiReset());
-            if (!namePrefix.empty())
-                out.append(ansiFg(nameColor)).append(namePrefix).append(ansiReset());
+            messageBodyText = truncateUtf8StringByBytes(messageBodyText, containerWidthSizeT > combinedPrefixLength ? containerWidthSizeT - combinedPrefixLength : 0) + " ";
 
-            out.append(ansiFg(textColor)).append(body).append(ansiReset()).append("\x1b[K\33[1000C|\n");
+            outputBuffer.append("\x1b[90m|\x1b[0m ")
+                .append(getAnsiColorForeground(timeStyleColor))
+                .append(timeString)
+                .append(getAnsiResetStyle());
+
+            if (!authorPrefix.empty())
+            {
+                outputBuffer.append(getAnsiColorForeground(nameStyleColor))
+                    .append(authorPrefix)
+                    .append(getAnsiResetStyle());
+            }
+
+            outputBuffer.append(getAnsiColorForeground(textStyleColor))
+                .append(messageBodyText)
+                .append(getAnsiResetStyle())
+                .append("\x1b[K\33[1000C|\n");
         }
     }
 
-    if (hintBoxLines > 0)
+    // --- Отрисовка подсказок для команд (если есть) ---
+    if (reservedHintBoxLines > 0)
     {
-        const int contentCols = innerW;
-
-        size_t cmdColCp = 0;
-        for (const HintRow& r : hintLines)
-            cmdColCp = (std::max)(cmdColCp, utf8CountCodepoints(r.Command));
-
-        cmdColCp = min(cmdColCp + 2u, 22u);
-
-        auto hintTopBottom = [&contentCols]()
+        const int hintContentColumns = innerContainerWidth;
+        auto generateHintBorder = [&hintContentColumns]()
             {
-                std::string s;
-                s.push_back('+');
-                if (contentCols > 2)
-                    s.append(static_cast<size_t>(contentCols - 2), '-');
+                std::string borderString;
+                borderString.push_back('+');
 
-                if (contentCols >= 2)
-                    s.push_back('+');
+                if (hintContentColumns > 2)
+                    borderString.append(static_cast<size_t>(hintContentColumns - 2), '-');
 
-                return s;
+                if (hintContentColumns >= 2)
+                    borderString.push_back('+');
+
+                return borderString;
             };
 
-        out.append("\x1b[90m|\x1b[0m ")
-            .append(ansiFg(Color::DARK_GRAY))
-            .append(hintTopBottom())
-            .append(ansiReset())
+        size_t longestCommandLength = 0;
+        for (const CommandHintRow& hintRow : generatedHintLines)
+            longestCommandLength = (std::max)(longestCommandLength, countUtf8Codepoints(hintRow.CommandString));
+
+        longestCommandLength = min(longestCommandLength + 2u, 22u);
+        outputBuffer.append("\x1b[90m|\x1b[0m ")
+            .append(getAnsiColorForeground(Color::DARK_GRAY))
+            .append(generateHintBorder())
+            .append(getAnsiResetStyle())
             .append("\x1b[K\33[1000C|\n");
 
-        for (const HintRow& r : hintLines)
+        for (const CommandHintRow& hintRow : generatedHintLines)
         {
-            const size_t cmdW = utf8CountCodepoints(r.Command);
-            size_t padCp = (cmdColCp > cmdW) ? (cmdColCp - cmdW) : 1u;
+            const size_t currentCommandWidth = countUtf8Codepoints(hintRow.CommandString);
+            size_t paddingSpaces = (longestCommandLength > currentCommandWidth) 
+                ? (longestCommandLength - currentCommandWidth) : 1u;
 
-            const int descBudget = contentCols - static_cast<int>(cmdColCp + 1);
-            std::string desc = r.Description;
-            if (descBudget > 0)
+            const int availableDescriptionBudget = static_cast<int>(hintContentColumns - longestCommandLength + 1);
+            std::string commandDescriptionText = hintRow.CommandDescription;
+
+            if (availableDescriptionBudget > 0)
             {
-                const size_t maxDescCp = static_cast<size_t>(descBudget);
-                if (utf8CountCodepoints(desc) > maxDescCp)
+                if (countUtf8Codepoints(commandDescriptionText) > availableDescriptionBudget)
                 {
-                    const size_t keep = maxDescCp > 3 ? maxDescCp - 3 : maxDescCp;
-                    desc = utf8TakeCodepoints(desc, keep) + "...";
+                    const size_t charactersToKeep = availableDescriptionBudget > 3 ? availableDescriptionBudget - 3 : availableDescriptionBudget;
+                    commandDescriptionText = extractMaxUtf8Codepoints(commandDescriptionText, charactersToKeep) + "...";
                 }
             }
             else
             {
-                desc.clear();
+                commandDescriptionText.clear();
             }
 
-            out.append("\x1b[90m|\x1b[0m ")
-                .append(ansiFg(Color::YELLOW))
-                .append(r.Command)
-                .append(ansiReset());
+            outputBuffer.append("\x1b[90m|\x1b[0m ")
+                .append(getAnsiColorForeground(Color::YELLOW))
+                .append(hintRow.CommandString)
+                .append(getAnsiResetStyle());
 
-            for (size_t p = 0; p < padCp; ++p)
-                out.push_back(' ');
+            for (size_t spaceIndex = 0; spaceIndex < paddingSpaces; ++spaceIndex)
+                outputBuffer.push_back(' ');
 
-            out.append(ansiFg(Color::DARK_GRAY)).append(desc).append(ansiReset()).append("\x1b[K\33[1000C|\n");
+            outputBuffer.append(getAnsiColorForeground(Color::DARK_GRAY))
+                .append(commandDescriptionText)
+                .append(getAnsiResetStyle())
+                .append("\x1b[K\33[1000C|\n");
         }
 
-        out.append("\x1b[90m|\x1b[0m ")
-            .append(ansiFg(Color::DARK_GRAY))
-            .append(hintTopBottom())
-            .append(ansiReset())
+        outputBuffer.append("\x1b[90m|\x1b[0m ")
+            .append(getAnsiColorForeground(Color::DARK_GRAY))
+            .append(generateHintBorder())
+            .append(getAnsiResetStyle())
             .append("\x1b[K\33[1000C|\n");
     }
 
-    out.append(ansiFg(Color::DARK_CYAN)).append(horiz()).append(ansiReset()).push_back('\n');
+    // --- Отрисовка строки ввода и нижнего статуса ---
+    outputBuffer.append(getAnsiColorForeground(Color::DARK_CYAN))
+        .append(generateHorizontalLine())
+        .append(getAnsiResetStyle())
+        .push_back('\n');
 
-    size_t promptLen = prompt.size();
-    std::string displayInput = inputBuffer;
-    if (promptLen + 3 > static_cast<size_t>(innerW))
+    size_t activePromptLength = inputPromptLabel.size();
+    std::string safeDisplayInput = userInputBuffer;
+
+    if (activePromptLength + 3 > static_cast<size_t>(innerContainerWidth))
     {
-        displayInput.clear();
+        safeDisplayInput.clear();
     }
     else
     {
-        const size_t maxIn = innerW - promptLen;
-        if (displayInput.size() > maxIn)
-            displayInput = "..." + displayInput.substr(displayInput.size() - (maxIn - 3));
+        const size_t maxInputAllowed = innerContainerWidth - activePromptLength;
+        if (safeDisplayInput.size() > maxInputAllowed)
+            safeDisplayInput = "..." + safeDisplayInput.substr(safeDisplayInput.size() - (maxInputAllowed - 3));
+
     }
 
-    out.append("\x1b[90m|\x1b[0m ").append(ansiFg(Color::GREEN)).append(prompt).append(ansiReset());
-    out.append(ansiFg(Color::WHITE)).append(displayInput).append(ansiReset()).append("\x1b[K\33[1000C|\n");
-    out.append(ansiFg(Color::DARK_CYAN)).append(horiz()).append(ansiReset()).push_back('\n');
+    outputBuffer.append("\x1b[90m|\x1b[0m ")
+        .append(getAnsiColorForeground(Color::GREEN))
+        .append(inputPromptLabel)
+        .append(getAnsiResetStyle());
 
-    const uint32_t unreadTotal = totalUnreadCount();
-    std::string badgeCore;
-    if (unreadTotal > 0)
+    outputBuffer.append(getAnsiColorForeground(Color::WHITE))
+        .append(safeDisplayInput)
+        .append(getAnsiResetStyle())
+        .append("\x1b[K\33[1000C|\n");
+
+    outputBuffer.append(getAnsiColorForeground(Color::DARK_CYAN))
+        .append(generateHorizontalLine())
+        .append(getAnsiResetStyle())
+        .push_back('\n');
+
+    // --- Бейдж уведомлений о непрочитанных сообщениях ---
+    const uint32_t totalUnreadCountBadge = calculateTotalUnreadMessages();
+    std::string notificationBadgeCore;
+
+    if (totalUnreadCountBadge > 0)
     {
-        badgeCore = "[" + std::to_string(unreadTotal) + "] ";
-        if (unreadByChat.size() == 1)
-            badgeCore += clipUtf8Bytes(unreadChatLabels[unreadByChat.begin()->first], 28);
-        else
-            badgeCore += std::to_string(unreadByChat.size()) + " \xD1\x87\xD0\xB0\xD1\x82\xD0\xBE\xD0\xB2";
-    }
-
-    {
-        std::string left = "| ESC — выход | /help | ";
-        if (!badgeCore.empty())
-            left = clipUtf8Bytes(left, static_cast<size_t>((std::max)(6, width - static_cast<int>(badgeCore.size()) - 2)));
-
-        out.append(ansiFg(Color::DARK_GRAY)).append(left);
-        if (!badgeCore.empty())
+        notificationBadgeCore = "[" + std::to_string(totalUnreadCountBadge) + "] ";
+        if (unreadMessageCountByChatId.size() == 1)
         {
-            char pos[40]{};
-            snprintf(pos, sizeof(pos), "\x1b[%d;%dH", height, (std::max)(2, width - static_cast<int>(badgeCore.size()) + 1));
-            out.append(pos).append(ansiNotifyStyle()).append(badgeCore).append(ansiReset());
+            notificationBadgeCore += truncateUtf8StringByBytes(unreadChatNamesByChatId[unreadMessageCountByChatId.begin()->first], 28);
         }
-
-        out.append("\x1b[K\33[1000C|\n").append(ansiReset());
+        else
+        {
+            notificationBadgeCore += std::to_string(unreadMessageCountByChatId.size()) + " \xD1\x87\xD0\xB0\xD1\x82\xD0\xBE\xD0\xB2"; // "чатов"
+        }
     }
 
-    char cup[48]{};
-    snprintf(cup, sizeof(cup), "\x1b[?25h\x1b[%d;%dH", chatHeight + 3, (std::min)(3 + static_cast<int>(promptLen) + static_cast<int>(displayInput.size()), width));
-    out.append(cup);
+    std::string leftStatusPanel = "| ESC — выход | /help | ";
+    if (!notificationBadgeCore.empty())
+    {
+        leftStatusPanel = truncateUtf8StringByBytes(
+            leftStatusPanel, max(6, terminalWidth - notificationBadgeCore.size() - 2));
+    }
 
-    TerminalUI::platformWriteStdout(out);
+    outputBuffer.append(getAnsiColorForeground(Color::DARK_GRAY)).append(leftStatusPanel);
+    if (!notificationBadgeCore.empty())
+    {
+        char ansiPosition[40]{};
+        snprintf(
+            ansiPosition,
+            sizeof(ansiPosition),
+            "\x1b[%d;%dH",
+            static_cast<int>(terminalHeight),
+            max(2, terminalWidth - notificationBadgeCore.size() + 1));
+
+        outputBuffer.append(ansiPosition)
+            .append(getAnsiNotificationStyle())
+            .append(notificationBadgeCore)
+            .append(getAnsiResetStyle());
+    }
+
+    outputBuffer.append("\x1b[K\33[1000C|\n").append(getAnsiResetStyle());
+
+    // Возвращаем курсор обратно в строку ввода текста
+    char cursorPositionCommand[48]{};
+    snprintf(
+        cursorPositionCommand,
+        sizeof(cursorPositionCommand),
+        "\x1b[?25h\x1b[%d;%dH",
+        static_cast<int>(calculatedChatHeight + 3),
+        min(3 + activePromptLength + safeDisplayInput.size(), terminalWidth));
+
+    outputBuffer.append(cursorPositionCommand);
+    TerminalUI::platformWriteStdout(outputBuffer);
 }
 
-void TerminalUI::tryAuth(Transport* transportSocket, std::string& username, std::string& password)
+void TerminalUI::tryAuth(Transport* connectionSocket, std::string& inputUsername, std::string& inputPassword)
 {
-    transport = transportSocket;
-    Request req = Request::CreateLogin(transport->AccessToken, username, password);
-    Responce responce = Protocol::SendRequest(*transport, req);
+    activeTransport = connectionSocket;
+    Request loginRequest = Request::CreateLogin(activeTransport->AccessToken, inputUsername, inputPassword);
+    Responce serverResponse = Protocol::SendRequest(*activeTransport, loginRequest);
 
-    if (responce.Type == ResponceType::Error)
+    if (serverResponse.Type == ResponceType::Error)
     {
-        addMessage("Ошибка: " + std::string(responce.Error.Message.buffer));
+        addMessage("Ошибка: " + std::string(serverResponse.Error.Message.buffer));
         drawUI();
         return;
     }
 
     {
-        std::lock_guard<std::mutex> lk(uiMutex);
-        currentUser = responce.Auth.UserModel;
-        currentChat = &idleChat;
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+        currentLoggedInUser = serverResponse.Auth.UserModel;
+        currentActiveChat = &idleChatPlaceholder;
     }
 
-    addMessage("Добро пожаловать, " + username + "!");
-    try
-    {
-        requestChatListIntoCache();
-    }
-    catch (...) {}
+    addMessage("Добро пожаловать, " + inputUsername + "!");
 
-    requestAddonCommandsIntoCache();
+    fetchAndCacheChatList();
+    fetchAndCacheAddonCommands();
+
     try
     {
-        std::lock_guard<std::mutex> lk(uiMutex);
-        if (!chatList.empty())
-            setChatListMode(true);
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+        if (!cachedChatList.empty())
+            toggleChatListMode(true);
     }
-    catch (...) {}
+    ignore
 
     drawUI();
-    return;
 }
 
 void TerminalUI::drawUI()
 {
-    std::lock_guard<std::mutex> lock(uiMutex);
-    renderUnlocked();
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+    renderInterfaceUnlocked();
 }
 
-void TerminalUI::addMessage(const Message& message)
+void TerminalUI::addMessage(const Message& incomingMessage)
 {
-    std::lock_guard<std::mutex> lock(uiMutex);
-    addMessageUnlocked(message);
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+    appendMessageToChatUnlocked(incomingMessage);
 }
 
-void TerminalUI::addMessage(const std::string& content)
+void TerminalUI::addMessage(const std::string& plainTextContent)
 {
-    std::lock_guard<std::mutex> lock(uiMutex);
-    Message message{};
-    message.From.Id = SYSTEM_FROMID;
-    message.Text = content.c_str();
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
 
-    if (currentChat.value() == &idleChat)
+    Message systemMessage{};
+    systemMessage.From.Id = SYSTEM_FROMID;
+    systemMessage.Text = plainTextContent.c_str();
+
+    if (currentActiveChat.value() == &idleChatPlaceholder)
     {
-        message.DestChat = idleChat.ChatInfo;
-        idleChat.Messages.push_back(message);
+        systemMessage.DestChat = idleChatPlaceholder.ChatInfo;
+        idleChatPlaceholder.Messages.push_back(systemMessage);
     }
     else
     {
-        message.DestChat = currentChat.value()->ChatInfo;
-        MemoryCache::appendMessageToChat(message.DestChat.Id, message);
+        systemMessage.DestChat = currentActiveChat.value()->ChatInfo;
+        MemoryCache::appendMessageToChat(systemMessage.DestChat.Id, systemMessage);
     }
 
-    addMessageUnlocked(message);
+    appendMessageToChatUnlocked(systemMessage);
 }
 
-void TerminalUI::onChatRenamed(const Chat& chat)
+void TerminalUI::onChatRenamed(const Chat& renamedChat)
 {
-    addMessage("Чат переименоан в " + std::string(chat.Name));
+    addMessage("Чат переименован в " + std::string(renamedChat.Name));
     drawUI();
 }
 
-void TerminalUI::onUserKickedFromChat(const Chat& chat, const User& target)
+void TerminalUI::onUserKickedFromChat(const Chat& targetChat, const User& targetUser)
 {
-    addMessage("Пользователь @" + std::string(target.Name) + " исключен из чата");
+    addMessage("Пользователь @" + std::string(targetUser.Name) + " исключен из чата");
     drawUI();
 }
 
-void TerminalUI::onUserBannedFromChat(const Chat& chat, const User& target)
+void TerminalUI::onUserBannedFromChat(const Chat& targetChat, const User& targetUser)
 {
-    addMessage("Пользователь @" + std::string(target.Name) + " забанен в чате");
+    addMessage("Пользователь @" + std::string(targetUser.Name) + " забанен в чате");
     drawUI();
 }
 
-void TerminalUI::onUserUnbannedFromChat(const Chat& chat, const User& target)
+void TerminalUI::onUserUnbannedFromChat(const Chat& targetChat, const User& targetUser)
 {
-    addMessage("Пользователь @" + std::string(target.Name) + " разбанен в чате");
+    addMessage("Пользователь @" + std::string(targetUser.Name) + " разбанен в чате");
     drawUI();
 }
 
-bool TerminalUI::processCommand(const std::string& command)
+bool TerminalUI::processCommand(const std::string& userCommandString)
 {
-    if (command.empty())
+    if (userCommandString.empty())
         return true;
 
-    std::vector<std::string> tokens;
-    std::stringstream ss(command);
-    std::string token;
-    while (ss >> token) tokens.push_back(token);
+    std::vector<std::string> commandTokens;
+    std::stringstream stringStream(userCommandString);
+    std::string currentToken;
 
-    if (tokens[0] == "/help")
+    while (stringStream >> currentToken)
+        commandTokens.push_back(currentToken);
+
+    if (commandTokens[0] == "/help")
     {
         addMessage("Доступные команды: /register, /login, /logout, /chat, /chats, /members, /create, /join, /refresh, /clear, /exit");
         drawUI();
         return true;
     }
 
-    if (tokens[0] == "/register" || tokens[0] == "/login")
+    if (commandTokens[0] == "/register" || commandTokens[0] == "/login")
     {
-        if (tokens.size() < 3) { addMessage("Использование: " + tokens[0] + " [username] [password]"); drawUI(); return false; }
-        std::string user = tokens[1], pass = tokens.size() >= 3 ? tokens[2] : "";
-
-        Request req = (tokens[0] == "/register") ? Request::CreateRegister(transport->AccessToken, user, pass) : Request::CreateLogin(transport->AccessToken, user, pass);
-        Responce responce = Protocol::SendRequest(*transport, req);
-        
-        if (responce.Type == ResponceType::Error) { addMessage("Ошибка: " + std::string(responce.Error.Message.buffer)); drawUI(); return false; }
-
-        { std::lock_guard<std::mutex> lk(uiMutex); currentUser = responce.Auth.UserModel; currentChat = &idleChat; }
-        addMessage("Добро пожаловать, " + user + "!");
-        try { requestChatListIntoCache(); } catch (...) {}
-        requestAddonCommandsIntoCache();
-        try { std::lock_guard<std::mutex> lk(uiMutex); if (!chatList.empty()) setChatListMode(true); } catch (...) {}
-        drawUI();
-        return true;
-    }
-
-    if (tokens[0] == "/logout")
-    {
-        if (!isLoggedIn()) { addMessage("Неавторизован!"); drawUI(); return false; }
-        Protocol::SendRequest(*transport, Request::CreateLogin(transport->AccessToken, "", ""));
-        { std::lock_guard<std::mutex> lk(uiMutex); currentUser = std::nullopt; currentChat = &idleChat; chatList.clear(); chatListSelected = 0; setChatListMode(false); addonCommandsCache.clear(); addonCommandsLoaded = false; }
-        drawUI();
-        return true;
-    }
-
-    if (tokens[0] == "/chats")
-    {
-        if (!isLoggedIn()) { addMessage("Неавторизован!"); drawUI(); return false; }
-        try { requestChatListIntoCache(); } catch (const std::runtime_error& err) { addMessage(std::string("Ошибка: ") + err.what()); drawUI(); return false; }
-        if (!addonCommandsLoaded) requestAddonCommandsIntoCache();
-        std::lock_guard<std::mutex> lk(uiMutex); setChatListMode(true); drawUI(); return true;
-    }
-
-    if (tokens[0] == "/chat")
-    {
-        if (!isLoggedIn()) { addMessage("Неавторизован!"); drawUI(); return false; }
-        if (tokens.size() < 2) { addMessage("Использование: /chat [chat_name]"); drawUI(); return false; }
-        Responce responce = Protocol::SendRequest(*transport, Request::CreateGetChatInfo(transport->AccessToken, tokens[1]));
-        if (responce.Type == ResponceType::Error) { addMessage("Ошибка: " + std::string(responce.Error.Message.buffer)); drawUI(); return false; }
-        return selectChatAfterLoad(responce.GetChatInfo.ChatModel);
-    }
-
-    if (tokens[0] == "/members")
-    {
-        if (!isLoggedIn() || !isChatting()) { addMessage("Войдите и выберите чат"); drawUI(); return false; }
-        for (const User& member : currentChat.value()->Members) addMessage(member.Name.buffer);
-        drawUI(); return true;
-    }
-
-    if (tokens[0] == "/create" || tokens[0] == "/join")
-    {
-        if (!isLoggedIn()) { addMessage("Неавторизован!"); drawUI(); return false; }
-        if (tokens.size() < 2) { addMessage("Использование: " + tokens[0] + " [название]"); drawUI(); return false; }
-        const std::string chatQuery = joinTokens(tokens, 1);
-        Request req = (tokens[0] == "/create") ? Request::CreateSpawnGroupChat(transport->AccessToken, chatQuery) : Request::CreateJoinGroupChat(transport->AccessToken, chatQuery);
-        Responce responce = Protocol::SendRequest(*transport, req);
-        if (responce.Type == ResponceType::Error) { addMessage(std::string(responce.Error.Message.buffer)); drawUI(); return false; }
-        return selectChatAfterLoad((tokens[0] == "/create") ? responce.CreateChat.ChatModel : responce.JoinChat.ChatModel);
-    }
-
-    if (tokens[0] == "/refresh")
-    {
-        if (!isLoggedIn() || !isChatting())
+        if (commandTokens.size() < 3)
         {
-            addMessage("Войдите и выберите чат");
+            addMessage("Использование: " + commandTokens[0] + " [username] [password]");
+            drawUI();
+            return true;
+        }
+
+        std::string authUser = commandTokens[1];
+        std::string authPass = commandTokens.size() >= 3 ? commandTokens[2] : "";
+
+        Request authRequest = (commandTokens[0] == "/register")
+            ? Request::CreateRegister(activeTransport->AccessToken, authUser, authPass)
+            : Request::CreateLogin(activeTransport->AccessToken, authUser, authPass);
+
+        Responce authResponse = Protocol::SendRequest(*activeTransport, authRequest);
+        if (authResponse.Type == ResponceType::Error)
+        {
+            addMessage("Ошибка: " + std::string(authResponse.Error.Message.buffer));
+            drawUI();
+            return true;
+        }
+
+        {
+            std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+            currentLoggedInUser = authResponse.Auth.UserModel;
+            currentActiveChat = &idleChatPlaceholder;
+        }
+
+        addMessage("Добро пожаловать, " + authUser + "!");
+
+        fetchAndCacheChatList();
+        fetchAndCacheAddonCommands();
+
+        try
+        {
+            std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+            if (!cachedChatList.empty())
+                toggleChatListMode(true);
+        }
+        ignore
+
+        drawUI();
+        return true;
+    }
+
+    if (commandTokens[0] == "/logout")
+    {
+        if (!isUserLoggedIn())
+        {
+            addMessage("Неавторизован!");
             drawUI();
             return false;
         }
 
+        Request logoutRequest = Request::CreateLogin(activeTransport->AccessToken, "", "");
+        Protocol::SendRequest(*activeTransport, logoutRequest);
+
+        {
+            std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+            currentLoggedInUser = std::nullopt;
+            currentActiveChat = &idleChatPlaceholder;
+
+            selectedChatListIndex = 0;
+            cachedChatList.clear();
+            toggleChatListMode(false);
+
+            cachedAddonCommands.clear();
+            areAddonCommandsLoaded = false;
+        }
+
+        drawUI();
+        return true;
+    }
+
+    if (commandTokens[0] == "/chats")
+    {
+        if (!isUserLoggedIn())
+        {
+            addMessage("Неавторизован!");
+            drawUI();
+            return true;
+        }
+
         try
         {
-            std::vector<Responce> responces = Protocol::SendRequestList(*transport, Request::CreateGetChatHistory(transport->AccessToken, currentChat.value()->ChatInfo.Id), [](Responce& responce) { return responce.GetChatHistory.RemainingMessages; });
-            ChatMemory* chat = currentChat.value();
+            fetchAndCacheChatList();
+        }
+        catch (const std::runtime_error& requestError)
+        {
+            addMessage(std::string("Ошибка: ") + requestError.what());
+            drawUI();
+            return true;
+        }
+
+        if (!areAddonCommandsLoaded)
+        {
+            fetchAndCacheAddonCommands();
+        }
+
+        std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+        toggleChatListMode(true);
+        drawUI();
+        return true;
+    }
+
+    if (commandTokens[0] == "/chat")
+    {
+        if (!isUserLoggedIn())
+        {
+            addMessage("Неавторизован!");
+            drawUI();
+            return true;
+        }
+
+        if (commandTokens.size() < 2)
+        {
+            addMessage("Использование: /chat [chat_name]");
+            drawUI();
+            return true;
+        }
+
+        Request getChatInfoRequest = Request::CreateGetChatInfo(activeTransport->AccessToken, commandTokens[1]);
+        Responce chatInfoResponse = Protocol::SendRequest(*activeTransport, getChatInfoRequest);
+
+        if (chatInfoResponse.Type == ResponceType::Error)
+        {
+            addMessage("Ошибка: " + std::string(chatInfoResponse.Error.Message.buffer));
+            drawUI();
+            return true;
+        }
+
+        return loadAndSelectChat(chatInfoResponse.GetChatInfo.ChatModel);
+    }
+
+    if (commandTokens[0] == "/members")
+    {
+        if (!isUserLoggedIn() || !isUserInActiveChat())
+        {
+            addMessage("Войдите и выберите чат");
+            drawUI();
+            return true;
+        }
+
+        for (const User& chatMember : currentActiveChat.value()->Members)
+        {
+            addMessage(chatMember.Name.buffer);
+        }
+
+        drawUI();
+        return true;
+    }
+
+    if (commandTokens[0] == "/create" || commandTokens[0] == "/join")
+    {
+        if (!isUserLoggedIn())
+        {
+            addMessage("Неавторизован!");
+            drawUI();
+            return true;
+        }
+
+        if (commandTokens.size() < 2)
+        {
+            addMessage("Использование: " + commandTokens[0] + " [название]");
+            drawUI();
+            return true;
+        }
+
+        const std::string combinedChatQuery = joinStringTokens(commandTokens, 1);
+        Request groupActionRequest = (commandTokens[0] == "/create")
+            ? Request::CreateSpawnGroupChat(activeTransport->AccessToken, combinedChatQuery)
+            : Request::CreateJoinGroupChat(activeTransport->AccessToken, combinedChatQuery);
+
+        Responce groupActionResponse = Protocol::SendRequest(*activeTransport, groupActionRequest);
+        if (groupActionResponse.Type == ResponceType::Error)
+        {
+            addMessage(std::string(groupActionResponse.Error.Message.buffer));
+            drawUI();
+            return true;
+        }
+
+        const Chat& resultedChat = (commandTokens[0] == "/create")
+            ? groupActionResponse.CreateChat.ChatModel
+            : groupActionResponse.JoinChat.ChatModel;
+
+        return loadAndSelectChat(resultedChat);
+    }
+
+    if (commandTokens[0] == "/refresh")
+    {
+        if (!isUserLoggedIn() || !isUserInActiveChat())
+        {
+            addMessage("Войдите и выберите чат");
+            drawUI();
+            return true;
+        }
+
+        try
+        {
+            Request historyRequest = Request::CreateGetChatHistory(activeTransport->AccessToken, currentActiveChat.value()->ChatInfo.Id);
+            std::vector<Responce> serverResponses = Protocol::SendRequestList(*activeTransport, historyRequest,
+                [](Responce& responseData) { return responseData.GetChatHistory.RemainingMessages; });
+
+            ChatMemory* currentTargetChat = currentActiveChat.value();
             {
-                std::lock_guard<std::mutex> lk(uiMutex);
-                chat->Messages.clear();
-                for (Responce& responce : responces)
+                std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+                currentTargetChat->Messages.clear();
+
+                for (Responce& historyResponse : serverResponses)
                 {
-                    MemoryCache::storeMessageToChat(chat->ChatInfo.Id, responce.GetChatHistory.CurrentMessage, false);
-                    addMessageUnlocked(responce.GetChatHistory.CurrentMessage);
+                    MemoryCache::storeMessageToChat(currentTargetChat->ChatInfo.Id, historyResponse.GetChatHistory.CurrentMessage, false);
+                    appendMessageToChatUnlocked(historyResponse.GetChatHistory.CurrentMessage);
                 }
 
-                chat->MessagesLoaded = true;
+                currentTargetChat->MessagesLoaded = true;
             }
 
             drawUI();
             return true;
         }
-        catch (const std::runtime_error& err) 
+        catch (const std::runtime_error& reloadError)
         {
-            addMessage("Ошибка обновления: " + std::string(err.what()));
+            addMessage("Ошибка обновления: " + std::string(reloadError.what()));
             drawUI();
-            return false;
+            return true;
         }
     }
 
-    if (tokens[0] == "/clear")
+    if (commandTokens[0] == "/clear")
     {
         drawUI();
         return true;
     }
 
-    if (tokens[0] == "/exit")
+    if (commandTokens[0] == "/exit")
     {
-        running = false;
+        isApplicationRunning = false;
         return true;
     }
 
