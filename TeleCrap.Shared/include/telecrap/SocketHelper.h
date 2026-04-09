@@ -1,13 +1,26 @@
 #pragma once
 
 #include <string>
+#include <cstdint>
 
 #ifdef _WIN32
     // Windows
     #include <WinSock2.h>
     #include <Windows.h>
 
-    typedef int socklen_t;
+    typedef int32_t socklen_t;
+
+    /*
+    #if defined(_WIN64)
+    typedef uint64_t SockHandle_t;
+    typedef int32_t SockLen_t;
+    
+    #else
+    typedef uint32_t SockHandle_t;
+    typedef int32_t SockLen_t;
+    #endif
+    */
+
 #else
     // Linux (POSIX)
     #include <sys/types.h>

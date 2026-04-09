@@ -20,6 +20,7 @@ void Console::Init()
 {
 #ifdef _WIN32
     // Устанавливаем кодовую страницу UTF-8 для поддержки русского
+    std::setlocale(LC_ALL, "");
     SetConsoleOutputCP(65001);
     SetConsoleCP(65001);
 

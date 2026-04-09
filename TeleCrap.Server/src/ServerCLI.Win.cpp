@@ -1,10 +1,6 @@
-// File note: Windows-адаптер серверной CLI: чтение WinAPI событий консоли и маршрутизация в ServerCLI hooks.
+п»ї// File note: Windows-Р°РґР°РїС‚РµСЂ СЃРµСЂРІРµСЂРЅРѕР№ CLI: С‡С‚РµРЅРёРµ WinAPI СЃРѕР±С‹С‚РёР№ РєРѕРЅСЃРѕР»Рё Рё РјР°СЂС€СЂСѓС‚РёР·Р°С†РёСЏ РІ ServerCLI hooks.
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <Windows.h>
 #include <ctime>
 
@@ -64,7 +60,7 @@ static void handleKeyEventWin(const KEY_EVENT_RECORD& ke)
 
 void ServerCLI::run(Transport* transportSocket)
 {
-    ServerCLI::renderPrompt(); // Первый рендер
+    ServerCLI::renderPrompt(); // РџРµСЂРІС‹Р№ СЂРµРЅРґРµСЂ
     const HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
     INPUT_RECORD records[32]{};
 

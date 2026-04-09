@@ -1008,7 +1008,7 @@ void renderInterfaceUnlocked()
         sizeof(cursorPositionCommand),
         "\x1b[?25h\x1b[%d;%dH",
         static_cast<int>(calculatedChatHeight + 3),
-        min(3 + activePromptLength + safeDisplayInput.size(), terminalWidth));
+        static_cast<int>(min(3 + activePromptLength + safeDisplayInput.size(), terminalWidth)));
 
     outputBuffer.append(cursorPositionCommand);
     TerminalUI::platformWriteStdout(outputBuffer);

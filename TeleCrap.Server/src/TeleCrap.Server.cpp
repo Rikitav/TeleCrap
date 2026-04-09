@@ -1,8 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define _CRT_SECURE_NO_WARNINGS
-
-#include <exception>
+п»ї#include <exception>
 #include <new>
 #include <thread>
 #include <stdexcept>
@@ -29,8 +25,8 @@ static void listenClientRequestsLoop(Transport* transport)
     {
         try
         {
-            // Цикл обработки запросов одного клиента.
-            // Поток блокируется на чтении из TCP, пока клиент не пришлет следующий Request.
+            // Р¦РёРєР» РѕР±СЂР°Р±РѕС‚РєРё Р·Р°РїСЂРѕСЃРѕРІ РѕРґРЅРѕРіРѕ РєР»РёРµРЅС‚Р°.
+            // РџРѕС‚РѕРє Р±Р»РѕРєРёСЂСѓРµС‚СЃСЏ РЅР° С‡С‚РµРЅРёРё РёР· TCP, РїРѕРєР° РєР»РёРµРЅС‚ РЅРµ РїСЂРёС€Р»РµС‚ СЃР»РµРґСѓСЋС‰РёР№ Request.
             Request request = Protocol::GetRequest(*transport);
             Backend::processRequest(transport, request);
         }
@@ -61,8 +57,8 @@ static void listenHandshakeRequestsLoop(Transport* handshakeTransport)
     {
         try
         {
-            // Цикл приема новых подключений (handshake listener).
-            // accept()+handshake выполняются синхронно; на каждый успешный handshake создается отдельный поток клиента.
+            // Р¦РёРєР» РїСЂРёРµРјР° РЅРѕРІС‹С… РїРѕРґРєР»СЋС‡РµРЅРёР№ (handshake listener).
+            // accept()+handshake РІС‹РїРѕР»РЅСЏСЋС‚СЃСЏ СЃРёРЅС…СЂРѕРЅРЅРѕ; РЅР° РєР°Р¶РґС‹Р№ СѓСЃРїРµС€РЅС‹Р№ handshake СЃРѕР·РґР°РµС‚СЃСЏ РѕС‚РґРµР»СЊРЅС‹Р№ РїРѕС‚РѕРє РєР»РёРµРЅС‚Р°.
             Transport* newUserTransport = Protocol::ListenHandshake(*handshakeTransport);
 
             std::thread(listenClientRequestsLoop, newUserTransport).detach();
@@ -90,7 +86,7 @@ static void sigintHandler(int signum)
 {
     Log::Info("Main", "Signal received, shutting down...");
     
-    // graceful shutdown: останавливаем backend и закрываем listener.
+    // graceful shutdown: РѕСЃС‚Р°РЅР°РІР»РёРІР°РµРј backend Рё Р·Р°РєСЂС‹РІР°РµРј listener.
     Backend::stop();
     if (handshakeTransport != nullptr)
         delete handshakeTransport;

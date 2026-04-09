@@ -1,8 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define _CRT_SECURE_NO_WARNINGS
-
-#include <exception>
+ï»¿#include <exception>
 #include <iostream>
 #include <stdexcept>
 #include <csignal>
@@ -56,15 +52,15 @@ static bool runningUnderCmd()
 
 static void sigintHandler(int signum)
 {
-    std::cout << "\n[Main] Ïîëó÷åí ñèãíàë ïðåðûâàíèÿ, çàâåðøàåì ðàáîòó..." << std::endl;
+    std::cout << "\n[Main] ÐŸÐ¾Ð»ÑƒÑ‡ÐµÐ½ ÑÐ¸Ð³Ð½Ð°Ð» Ð¿Ñ€ÐµÑ€Ñ‹Ð²Ð°Ð½Ð¸Ñ, Ð·Ð°Ð²ÐµÑ€ÑˆÐ°ÐµÐ¼ Ñ€Ð°Ð±Ð¾Ñ‚Ñƒ..." << std::endl;
     delete transport;
     exit(0);
 }
 
 static void processUpdate(const Update& update)
 {
-    // Update'û ïðèõîäÿò îò ñåðâåðà ÷åðåç ïåðèîäè÷åñêèé GetUpdates (polling).
-    // Çäåñü ïðîèñõîäèò ðàçâèëêà íà UI-ðåàêöèè è îáíîâëåíèå ëîêàëüíîãî êýøà.
+    // Update'Ñ‹ Ð¿Ñ€Ð¸Ñ…Ð¾Ð´ÑÑ‚ Ð¾Ñ‚ ÑÐµÑ€Ð²ÐµÑ€Ð° Ñ‡ÐµÑ€ÐµÐ· Ð¿ÐµÑ€Ð¸Ð¾Ð´Ð¸Ñ‡ÐµÑÐºÐ¸Ð¹ GetUpdates (polling).
+    // Ð—Ð´ÐµÑÑŒ Ð¿Ñ€Ð¾Ð¸ÑÑ…Ð¾Ð´Ð¸Ñ‚ Ñ€Ð°Ð·Ð²Ð¸Ð»ÐºÐ° Ð½Ð° UI-Ñ€ÐµÐ°ÐºÑ†Ð¸Ð¸ Ð¸ Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ðµ Ð»Ð¾ÐºÐ°Ð»ÑŒÐ½Ð¾Ð³Ð¾ ÐºÑÑˆÐ°.
     switch (update.Type)
     {
         case UpdateType::Message:
@@ -77,7 +73,7 @@ static void processUpdate(const Update& update)
         case UpdateType::UserJoined:
         {
             MemoryCache::addMemberToChat(update.UserJoined.ChatModel.Id, update.UserJoined.UserModel);
-            TerminalUI::addMessage(std::string(update.UserJoined.UserModel.Name.c_str()) + " ïðèñîåäèíèëñÿ ê ÷àòó");
+            TerminalUI::addMessage(std::string(update.UserJoined.UserModel.Name.c_str()) + " Ð¿Ñ€Ð¸ÑÐ¾ÐµÐ´Ð¸Ð½Ð¸Ð»ÑÑ Ðº Ñ‡Ð°Ñ‚Ñƒ");
             break;
         }
 
@@ -130,7 +126,7 @@ static void listenUpdates(Transport* transport)
     {
         try
         {
-            // Ïðîñòàÿ ìîäåëü äîñòàâêè: ðàç â ~1s ñïðàøèâàåì ñåðâåð î pending update'àõ.
+            // ÐŸÑ€Ð¾ÑÑ‚Ð°Ñ Ð¼Ð¾Ð´ÐµÐ»ÑŒ Ð´Ð¾ÑÑ‚Ð°Ð²ÐºÐ¸: Ñ€Ð°Ð· Ð² ~1s ÑÐ¿Ñ€Ð°ÑˆÐ¸Ð²Ð°ÐµÐ¼ ÑÐµÑ€Ð²ÐµÑ€ Ð¾ pending update'Ð°Ñ….
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             std::vector<Responce> updates = Protocol::SendRequestList(
                 *transport, Request::CreateGetUpdates(transport->AccessToken, false),
@@ -139,11 +135,6 @@ static void listenUpdates(Transport* transport)
             for (Responce& responce : updates)
 				processUpdate(responce.GetUpdates.CurrentUpdate);
         }
-        catch (disconnected_error&)
-        {
-            std::cout << "[Updates] Disconnected from server" << std::endl;
-            break;
-		}
         catch (const request_error& err)
         {
             if (err.which() == ERR_UNAUTHORIZED)
@@ -153,6 +144,12 @@ static void listenUpdates(Transport* transport)
             }
 
             std::cout << "[Updates] Runtime error : " << err.what() << std::endl;
+            abort();
+            break;
+        }
+        catch (disconnected_error&)
+        {
+            std::cout << "[Updates] Disconnected from server" << std::endl;
             abort();
             break;
         }
@@ -199,12 +196,12 @@ static void configLoad()
         Settings.Username = ini["User"]["Username"];
         Settings.Password = ini["User"]["Password"];
 
-        Log::Info("Config", "Íàñòðîéêè óñïåøíî çàãðóæåíû èç " + CONFIG_FILE);
+        Log::Info("Config", "ÐÐ°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ ÑƒÑÐ¿ÐµÑˆÐ½Ð¾ Ð·Ð°Ð³Ñ€ÑƒÐ¶ÐµÐ½Ñ‹ Ð¸Ð· " + CONFIG_FILE);
     }
     else
     {
-        // Ôàéëà íåò. Çàïîëíÿåì äåôîëòíûìè çíà÷åíèÿìè
-        Log::Info("Config", "Ôàéë íå íàéäåí. Ñîçäàåì êîíôèã ïî óìîë÷àíèþ...");
+        // Ð¤Ð°Ð¹Ð»Ð° Ð½ÐµÑ‚. Ð—Ð°Ð¿Ð¾Ð»Ð½ÑÐµÐ¼ Ð´ÐµÑ„Ð¾Ð»Ñ‚Ð½Ñ‹Ð¼Ð¸ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸ÑÐ¼Ð¸
+        Log::Info("Config", "Ð¤Ð°Ð¹Ð» Ð½Ðµ Ð½Ð°Ð¹Ð´ÐµÐ½. Ð¡Ð¾Ð·Ð´Ð°ÐµÐ¼ ÐºÐ¾Ð½Ñ„Ð¸Ð³ Ð¿Ð¾ ÑƒÐ¼Ð¾Ð»Ñ‡Ð°Ð½Ð¸ÑŽ...");
 
         Settings.ServerIP = "127.0.0.1";
         Settings.ServerPort = 7777;
@@ -232,10 +229,10 @@ int main(int argc, char** argv)
 		Console::Init();
         configLoad();
 
-        Log::Info("Main", "Èíèöèàëèçàöèÿ ñåðâèñîâ...");
+        Log::Info("Main", "Ð˜Ð½Ð¸Ñ†Ð¸Ð°Ð»Ð¸Ð·Ð°Ñ†Ð¸Ñ ÑÐµÑ€Ð²Ð¸ÑÐ¾Ð²...");
         Transport::Init();
         
-        Log::Info("Main", "Ïîïûòêà ïîäêëþ÷èòüñÿ ê ñåðâåðó...");
+        Log::Info("Main", "ÐŸÐ¾Ð¿Ñ‹Ñ‚ÐºÐ° Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡Ð¸Ñ‚ÑŒÑÑ Ðº ÑÐµÑ€Ð²ÐµÑ€Ñƒ...");
         SocketHelper::ServerAddress = inet_addr(Settings.ServerIP.c_str());
 		SocketHelper::ServerPort = Settings.ServerPort;
 
@@ -244,16 +241,16 @@ int main(int argc, char** argv)
 
         if (Settings.Username != "" && Settings.Password != "")
         {
-            Log::Info("Main", "Ïîïûòêà àâòîìàòè÷åñêîé àâòîðèçàöèè...");
+            Log::Info("Main", "ÐŸÐ¾Ð¿Ñ‹Ñ‚ÐºÐ° Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¾Ð¹ Ð°Ð²Ñ‚Ð¾Ñ€Ð¸Ð·Ð°Ñ†Ð¸Ð¸...");
             TerminalUI::tryAuth(transport, Settings.Username, Settings.Password);
         }
 
-        Log::Info("Main", "TeleCrap êëèåíò àêòèâåí!");
+        Log::Info("Main", "TeleCrap ÐºÐ»Ð¸ÐµÐ½Ñ‚ Ð°ÐºÑ‚Ð¸Ð²ÐµÐ½!");
         TerminalUI::run(transport);
         
         if (!runningUnderCmd())
         {
-            Log::Trace("Main", "Íàæìèòå ENTER äëÿ âûõîäà...");
+            Log::Trace("Main", "ÐÐ°Ð¶Ð¼Ð¸Ñ‚Ðµ ENTER Ð´Ð»Ñ Ð²Ñ‹Ñ…Ð¾Ð´Ð°...");
             std::cin.get();
         }
         
@@ -270,7 +267,7 @@ int main(int argc, char** argv)
 
         if (!runningUnderCmd())
         {
-            Log::Trace("Main", "Íàæìèòå ENTER äëÿ âûõîäà...");
+            Log::Trace("Main", "ÐÐ°Ð¶Ð¼Ð¸Ñ‚Ðµ ENTER Ð´Ð»Ñ Ð²Ñ‹Ñ…Ð¾Ð´Ð°...");
             std::cin.get();
         }
 

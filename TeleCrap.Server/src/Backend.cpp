@@ -124,25 +124,11 @@ void Backend::pushMessageToChatMembersExcept(const ChatInfo& chat, const Update&
     }
 }
 
-static void pushUpdateToChatMembersAll(const ChatInfo& chat, const Update& update)
+void Backend::pushUpdateToChatMembersAll(const ChatInfo& chat, const Update& update)
 {
     for (const UserInfo& member : Database::findMembersByChat(chat))
         pushUpdateToUser(member.Id, update);
 }
-
-/*
-static const char* eightBallAnswer()
-{
-    static const char* answers[] = {
-        "��.", "���.", "������ ��.", "������ ���.", "������ �����.", "�� ���� �������.",
-        "���������� ��.", "���������� ���.", "��������.", "���� ��.", "����� ������� � ��.", "����� ������� � ���.",
-    };
-    
-    thread_local std::mt19937 rng{ std::random_device{}() };
-    std::uniform_int_distribution<size_t> dist(0, sizeof(answers) / sizeof(answers[0]) - 1);
-    return answers[dist(rng)];
-}
-*/
 
 static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requestor, CommitMessageRequest& request, ChatInfo& chat)
 {
@@ -353,6 +339,8 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
 
         return true;
     }
+
+    return false;
 }
 
 void Backend::start()

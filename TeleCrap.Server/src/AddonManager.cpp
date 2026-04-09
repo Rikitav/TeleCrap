@@ -1,4 +1,4 @@
-#include <string>
+ï»¿#include <string>
 #include <unordered_map>
 #include <filesystem>
 #include <exception>
@@ -35,16 +35,16 @@ static sol::state lua;
 static std::unordered_map<std::string, sol::protected_function> commands;
 static sol::table addonState;
 
-// ˜˜˜˜˜ ˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜:
-// ˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜ Lua-˜˜˜ ˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜. ˜˜˜ "˜˜˜˜˜˜˜˜˜˜" ˜˜˜ ˜ ˜˜˜˜˜ ˜˜˜˜˜˜ ˜˜,
-// ˜˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜ ˜ ˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜/˜˜˜˜ = ˜˜˜˜˜˜˜˜˜˜˜˜˜ RCE/˜˜˜˜˜˜˜˜˜˜˜˜˜.
-// ˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜ Unsafe, ˜˜˜˜˜˜ ˜˜˜:
-// - ˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜ ˜ ˜˜˜˜˜˜/˜˜˜˜˜˜˜˜ ˜˜˜ sandbox'˜;
-// - ˜˜˜˜˜˜ ˜˜˜˜˜˜ ˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜ ˜ ˜˜˜˜˜˜˜˜˜˜˜˜˜ ˜ ˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜ (˜˜˜ unwind ˜˜˜˜˜ Lua).
+// Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜:
+// Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜ Lua-Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜. Â˜Â˜Â˜ "Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜" Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜,
+// Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜/Â˜Â˜Â˜Â˜ = Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ RCE/Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜.
+// Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Unsafe, Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜:
+// - Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜Â˜/Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜ sandbox'Â˜;
+// - Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ (Â˜Â˜Â˜ unwind Â˜Â˜Â˜Â˜Â˜ Lua).
 static std::string shellEscape(const std::string& input)
 {
-    // ˜˜˜˜˜˜˜˜˜˜˜ escaping ˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜.
-    // ˜˜ ˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜ injection; ˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜ best-effort ˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜.
+    // Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ escaping Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜.
+    // Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜ injection; Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜ best-effort Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜.
     std::string escaped;
     escaped.reserve(input.size() + 8);
     for (char c : input)
@@ -54,13 +54,14 @@ static std::string shellEscape(const std::string& input)
         else
             escaped += c;
     }
+
     return escaped;
 }
 
 static std::string execCaptureUnsafe(const std::string& command)
 {
-    // ˜˜˜˜˜˜˜˜˜˜ shell-˜˜˜˜˜˜˜ ˜ ˜˜˜˜ stdout.
-    // ˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜; ˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜ ˜˜˜˜˜˜.
+    // Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ shell-Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜ stdout.
+    // Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜; Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜.
     std::array<char, 256> buffer{};
     std::string result;
 
@@ -86,7 +87,7 @@ static std::string execCaptureUnsafe(const std::string& command)
 
 static std::string readFileUnsafe(const std::string& path)
 {
-    // ˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜˜. ˜˜˜˜ ˜˜˜˜˜˜˜˜ ˜˜ Lua.
+    // Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜. Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜ Lua.
     std::ifstream in(path, std::ios::binary);
     if (!in.is_open())
         return std::string();
@@ -98,7 +99,7 @@ static std::string readFileUnsafe(const std::string& path)
 
 static bool writeFileUnsafe(const std::string& path, const std::string& content)
 {
-    // ˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜. ˜˜˜˜ ˜ ˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜ ˜˜ Lua.
+    // Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜. Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜ Lua.
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out.is_open())
         return false;
@@ -108,7 +109,7 @@ static bool writeFileUnsafe(const std::string& path, const std::string& content)
 
 static bool appendFileUnsafe(const std::string& path, const std::string& content)
 {
-    // ˜˜˜˜˜˜˜˜˜˜˜ ˜ ˜˜˜˜˜ ˜˜˜˜˜. ˜˜˜˜ ˜ ˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜ ˜˜ Lua.
+    // Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜. Â˜Â˜Â˜Â˜ Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜ Lua.
     std::ofstream out(path, std::ios::binary | std::ios::app);
     if (!out.is_open())
         return false;
@@ -118,7 +119,7 @@ static bool appendFileUnsafe(const std::string& path, const std::string& content
 
 static sol::table listDirUnsafe(const std::string& path)
 {
-    // Directory listing ˜˜˜ Lua. ˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜-˜˜˜˜˜.
+    // Directory listing Â˜Â˜Â˜ Lua. Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜-Â˜Â˜Â˜Â˜Â˜.
     sol::table out = lua.create_table();
     int index = 1;
     try
@@ -128,7 +129,7 @@ static sol::table listDirUnsafe(const std::string& path)
     }
     catch (...)
     {
-        // ˜˜˜˜˜ ˜˜˜˜˜˜ (˜˜˜ ˜˜˜˜/˜˜˜ ˜˜˜˜˜) -> ˜˜˜˜˜˜ ˜˜˜˜˜˜˜, ˜˜˜˜˜ Lua ˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜ C++.
+        // Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜ (Â˜Â˜Â˜ Â˜Â˜Â˜Â˜/Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜) -> Â˜Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜, Â˜Â˜Â˜Â˜Â˜ Lua Â˜Â˜ Â˜Â˜Â˜Â˜Â˜ Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜Â˜ C++.
         return lua.create_table();
     }
     return out;
@@ -163,6 +164,7 @@ static sol::table usersToTable(const std::vector<UserInfo>& users)
     sol::table out = lua.create_table(static_cast<int>(users.size()), 0);
     for (size_t i = 0; i < users.size(); ++i)
         out[i + 1] = users[i];
+
     return out;
 }
 
@@ -171,16 +173,17 @@ static sol::table messagesToTable(const std::vector<Message>& messages)
     sol::table out = lua.create_table(static_cast<int>(messages.size()), 0);
     for (size_t i = 0; i < messages.size(); ++i)
         out[i + 1] = messages[i];
+    
     return out;
 }
 
 struct CommandContext
 {
-    // Êîíòåêñò âûïîëíåíèÿ êîìàíäû: "ñíèìîê" âõîäíûõ ïàðàìåòðîâ èç îáðàáîò÷èêà ñîîáùåíèÿ.
-    // Ïåðåäàåòñÿ â Lua, ÷òîáû àääîí ìîã:
-    // - ïîíÿòü, ãäå îí âûïîëíÿåòñÿ (÷àò/ïîëüçîâàòåëü/êîìàíäà),
-    // - îòâåòèòü â òåêóùèé ñîêåò,
-    // - ïðè íåîáõîäèìîñòè äåðíóòü ñåðâåðíûå îïåðàöèè (kick/ban/rename è ò.ï.).
+    // ÐšÐ¾Ð½Ñ‚ÐµÐºÑÑ‚ Ð²Ñ‹Ð¿Ð¾Ð»Ð½ÐµÐ½Ð¸Ñ ÐºÐ¾Ð¼Ð°Ð½Ð´Ñ‹: "ÑÐ½Ð¸Ð¼Ð¾Ðº" Ð²Ñ…Ð¾Ð´Ð½Ñ‹Ñ… Ð¿Ð°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ð¾Ð² Ð¸Ð· Ð¾Ð±Ñ€Ð°Ð±Ð¾Ñ‚Ñ‡Ð¸ÐºÐ° ÑÐ¾Ð¾Ð±Ñ‰ÐµÐ½Ð¸Ñ.
+    // ÐŸÐµÑ€ÐµÐ´Ð°ÐµÑ‚ÑÑ Ð² Lua, Ñ‡Ñ‚Ð¾Ð±Ñ‹ Ð°Ð´Ð´Ð¾Ð½ Ð¼Ð¾Ð³:
+    // - Ð¿Ð¾Ð½ÑÑ‚ÑŒ, Ð³Ð´Ðµ Ð¾Ð½ Ð²Ñ‹Ð¿Ð¾Ð»Ð½ÑÐµÑ‚ÑÑ (Ñ‡Ð°Ñ‚/Ð¿Ð¾Ð»ÑŒÐ·Ð¾Ð²Ð°Ñ‚ÐµÐ»ÑŒ/ÐºÐ¾Ð¼Ð°Ð½Ð´Ð°),
+    // - Ð¾Ñ‚Ð²ÐµÑ‚Ð¸Ñ‚ÑŒ Ð² Ñ‚ÐµÐºÑƒÑ‰Ð¸Ð¹ ÑÐ¾ÐºÐµÑ‚,
+    // - Ð¿Ñ€Ð¸ Ð½ÐµÐ¾Ð±Ñ…Ð¾Ð´Ð¸Ð¼Ð¾ÑÑ‚Ð¸ Ð´ÐµÑ€Ð½ÑƒÑ‚ÑŒ ÑÐµÑ€Ð²ÐµÑ€Ð½Ñ‹Ðµ Ð¾Ð¿ÐµÑ€Ð°Ñ†Ð¸Ð¸ (kick/ban/rename Ð¸ Ñ‚.Ð¿.).
     Transport* Socket;
     CommitMessageRequest Request;
     UserInfo Requestor;
@@ -215,16 +218,11 @@ void CommandContext::SendSystemMessage(const std::string& text) const
 {
     try
     {
-        // Ñîîáùåíèå ñîõðàíÿåòñÿ êàê ñèñòåìíîå (îò èìåíè SYSTEM) è ðàññûëàåòñÿ:
-        // - èíèöèàòîðó êîìàíäû: ÷åðåç íåìåäëåííûé Responce â òåêóùèé ñîêåò,
-        // - îñòàëüíûì ó÷àñòíèêàì: ÷åðåç push-î÷åðåäè Update (ñì. Backend.cpp).
         Message message = Database::commitSystemMessage(Chat, Request.Timestamp, text);
-        Protocol::SendResponce(*Socket, Responce::CreateCommitMessage(message));
-
         Update update{};
         update.Type = UpdateType::Message;
         update.MessageSent = message;
-        Backend::pushMessageToChatMembersExcept(Chat, update, Requestor.Id);
+        Backend::pushUpdateToChatMembersAll(Chat, update);
     }
     catch (const std::exception& e)
     {
@@ -236,7 +234,6 @@ void CommandContext::SendSystemMessage(const std::string& text) const
         Log::Error("Addons", "SendSystemMessage failed: unknown error");
     }
 }
-
 
 bool CommandContext::IsDirectChat() const
 {
@@ -256,6 +253,7 @@ bool CommandContext::IsRequestorMember() const
         if (member.Id == Requestor.Id)
             return true;
     }
+
     return false;
 }
 
@@ -357,6 +355,7 @@ bool CommandContext::IsChatMember(userid_t userId) const
         if (member.Id == userId)
             return true;
     }
+
     return false;
 }
 
@@ -365,6 +364,7 @@ sol::optional<Message> CommandContext::SendSystemMessageToChatId(chatid_t chatId
     std::optional<ChatInfo> target = Database::findChatById(chatId);
     if (!target.has_value())
         return sol::nullopt;
+
     return Database::commitSystemMessage(target.value(), Request.Timestamp, text);
 }
 
@@ -376,12 +376,13 @@ void AddonManager::Init()
         sol::lib::math,
         sol::lib::string,
         sol::lib::table,
-        sol::lib::coroutine,
-        sol::lib::io,
-        sol::lib::os,
-        sol::lib::utf8,
-        sol::lib::debug
+        sol::lib::coroutine
+        //sol::lib::io,
+        //sol::lib::os,
+        //sol::lib::utf8,
+        //sol::lib::debug
     );
+
     addonState = lua.create_table();
     lua.new_usertype<UserInfo>("UserInfo",
         "Id", &UserInfo::Id,
@@ -500,6 +501,7 @@ void AddonManager::Init()
             std::optional<ChatInfo> chat = Database::findChatById(chatId);
             if (!chat.has_value())
                 return lua.create_table();
+        
             return usersToTable(Database::findMembersByChat(chat.value()));
         });
 
@@ -508,6 +510,7 @@ void AddonManager::Init()
             std::optional<ChatInfo> chat = Database::findChatById(chatId);
             if (!chat.has_value())
                 return lua.create_table();
+            
             return messagesToTable(Database::findMessagesByChat(chat.value()));
         });
 
@@ -522,6 +525,7 @@ void AddonManager::Init()
             out = lua.create_table(static_cast<int>(chats.size()), 0);
             for (size_t i = 0; i < chats.size(); ++i)
                 out[i + 1] = chats[i];
+            
             return out;
         });
 
@@ -535,8 +539,10 @@ void AddonManager::Init()
             std::optional<ChatInfo> chat = Database::findChatById(chatId);
             if (!chat.has_value())
                 return sol::nullopt;
+            
             return Database::commitSystemMessage(chat.value(), timestamp, text);
         });
+
     lua.set_function("CreateGroupChatUnsafe", [](userid_t ownerUserId, const std::string& chatName) -> sol::optional<ChatInfo>
         {
             std::optional<UserInfo> owner = Database::findUserById(ownerUserId);
@@ -554,6 +560,7 @@ void AddonManager::Init()
             std::optional<UserInfo> user = Database::findUserById(userId);
             if (!chat.has_value() || !user.has_value())
                 return false;
+    
             Database::joinChatMember(chat.value(), user.value());
             return true;
         });
@@ -564,6 +571,7 @@ void AddonManager::Init()
             std::optional<UserInfo> user = Database::findUserById(userId);
             if (!chat.has_value() || !user.has_value())
                 return false;
+            
             Database::banUserInChat(chat.value(), user.value());
             return true;
         });
@@ -585,6 +593,7 @@ void AddonManager::Init()
             std::optional<ChatInfo> chat = Database::findChatById(chatId);
             if (!chat.has_value() || newName.empty())
                 return false;
+            
             fixed_string<CHATNAME_MAXLENGTH> name = std::string_view(newName);
             Database::renameChat(chat.value(), name);
             return true;
@@ -812,7 +821,7 @@ bool AddonManager::ExecuteCommand(const std::string& cmd, const std::string& arg
 {
     const auto find = commands.find(cmd);
     if (find == commands.end())
-        return false; // ˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜
+        return false;
 
     try
     {
@@ -834,19 +843,23 @@ bool AddonManager::ExecuteCommand(const std::string& cmd, const std::string& arg
         {
             sol::error err = result;
             Log::Error("Addons", "Lua Script error : " + find->first + " : " + err.what());
+            throw;
         }
     }
     catch (const sol::error& e)
     {
         Log::Error("Addons", "LuaState error : " + find->first + " : " + e.what());
+        throw;
     }
     catch (const std::exception& e)
     {
         Log::Error("Addons", "Command handler error : " + find->first + " : " + e.what());
+        throw;
     }
     catch (...)
     {
         Log::Error("Addons", "Unknown error in command handler : " + find->first);
+        throw;
     }
 
     return true;

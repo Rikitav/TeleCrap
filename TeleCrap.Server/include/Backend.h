@@ -72,4 +72,9 @@ public:
     /// Рассылает update всем участникам чата, кроме указанного пользователя.
     /// </summary>
     static void pushMessageToChatMembersExcept(const ChatInfo& chat, const Update& update, userid_t exceptUserId);
+
+    /// <summary>
+    /// Рассылает update всем участникоам чата, включая отправителя
+    /// </summary>
+    static void pushUpdateToChatMembersAll(const ChatInfo& chat, const Update& update);
 };
