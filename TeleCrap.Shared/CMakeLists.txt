@@ -13,6 +13,7 @@ add_library(telecrap_shared STATIC
 
 set(TELECRAP_BUNDLED_OPENSSL_ROOT "${CMAKE_SOURCE_DIR}/third-party/openssl-3.6.2")
 if(EXISTS "${TELECRAP_BUNDLED_OPENSSL_ROOT}/Configure")
+    find_program(TELECRAP_PERL_EXE perl REQUIRED)
     set(TELECRAP_OPENSSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/third-party/openssl/install")
     set(TELECRAP_OPENSSL_INCLUDE_DIR "${TELECRAP_OPENSSL_INSTALL_DIR}/include")
     file(MAKE_DIRECTORY "${TELECRAP_OPENSSL_INCLUDE_DIR}")
@@ -24,7 +25,6 @@ if(EXISTS "${TELECRAP_BUNDLED_OPENSSL_ROOT}/Configure")
     endif()
 
     if(WIN32)
-        find_program(TELECRAP_PERL_EXE perl REQUIRED)
         ExternalProject_Add(telecrap_openssl_ext
             SOURCE_DIR "${TELECRAP_BUNDLED_OPENSSL_ROOT}"
             BUILD_IN_SOURCE 1
@@ -34,10 +34,11 @@ if(EXISTS "${TELECRAP_BUNDLED_OPENSSL_ROOT}/Configure")
             BUILD_BYPRODUCTS "${TELECRAP_OPENSSL_CRYPTO_LIB}"
         )
     else()
+        # Не ./Configure: в git checkout часто нет +x → Permission denied. Configure — это Perl-скрипт.
         ExternalProject_Add(telecrap_openssl_ext
             SOURCE_DIR "${TELECRAP_BUNDLED_OPENSSL_ROOT}"
             BUILD_IN_SOURCE 1
-            CONFIGURE_COMMAND ./Configure linux-x86_64 no-shared no-tests --prefix=${TELECRAP_OPENSSL_INSTALL_DIR} --openssldir=${TELECRAP_OPENSSL_INSTALL_DIR}/ssl
+            CONFIGURE_COMMAND ${TELECRAP_PERL_EXE} Configure linux-x86_64 no-shared no-tests --prefix=${TELECRAP_OPENSSL_INSTALL_DIR} --openssldir=${TELECRAP_OPENSSL_INSTALL_DIR}/ssl
             BUILD_COMMAND make -j
             INSTALL_COMMAND make install_sw
             BUILD_BYPRODUCTS "${TELECRAP_OPENSSL_CRYPTO_LIB}"
