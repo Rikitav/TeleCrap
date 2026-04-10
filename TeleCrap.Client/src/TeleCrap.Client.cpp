@@ -221,7 +221,7 @@ int main(int argc, char** argv)
         srand(static_cast<unsigned int>(time(0)));
 
 #ifdef _WIN32
-        SetConsoleTitleA("TeleCrap Messenger v0.3");
+        SetConsoleTitleA("TeleCrap Messenger v0.4");
 #else
         std::cout << "\033]0;" << "TeleCrap Messenger v0.3" << "\007";
 #endif

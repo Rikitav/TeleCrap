@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <algorithm>
 
-#define TELECRAP_VERSION 3
+#define TELECRAP_VERSION 4
 
 #define SYSTEM_FROMID 1
 #define CHATNAME_MAXLENGTH 64

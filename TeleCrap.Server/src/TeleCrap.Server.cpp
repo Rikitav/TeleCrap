@@ -107,7 +107,7 @@ int main()
 #ifdef _WIN32
         SetConsoleTitleA("TeleCrap Server v0.3");
 #else
-        std::cout << "\033]0;" << "TeleCrap Server v0.3" << "\007";
+        std::cout << "\033]0;" << "TeleCrap Server v0.4" << "\007";
 #endif
 
         Log::Info("Main", "Initializing services...");
