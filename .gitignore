@@ -363,6 +363,13 @@ MigrationBackup/
 FodyWeavers.xsd
 /TeleCrap.Server/telecrap.db
 
+# Bundled OpenSSL: не коммитить вывод Configure (makefile от nmake перехватывает GNU make на Linux)
+third-party/openssl-3.6.2/makefile
+third-party/openssl-3.6.2/Makefile
+# Perlasm output is target-specific (NASM/Win64 vs gas/ELF); committed .S breaks Linux builds
+third-party/openssl-3.6.2/crypto/sm3/sm3-x86_64.S
+third-party/openssl-3.6.2/crypto/sm4/sm4-x86_64.S
+
 # CMake
 CMakeFiles/
 CMakeCache.txt
