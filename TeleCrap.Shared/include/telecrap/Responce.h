@@ -22,6 +22,10 @@ struct HandshakeResponce
 {
 	connflag_t Flag;
 	token_t Token;
+	std::uint8_t SecureMode;
+	std::uint8_t Reserved[3];
+	std::uint64_t IntegrityTag;
+	std::uint8_t ServerPublicKey[32];
 };
 
 struct AuthResponce
@@ -133,6 +137,7 @@ struct Responce
 	/// Создает handshake-ответ с echo-флагом и access token.
 	/// </summary>
 	static Responce CreateHandshake(const connflag_t& flag, const token_t token);
+	static Responce CreateHandshakeSecure(const connflag_t& flag, const token_t token, std::uint64_t integrityTag, const std::uint8_t serverPublicKey[32]);
 	
 	/// <summary>
 	/// Создает ответ успешной авторизации.

@@ -29,7 +29,28 @@ Responce Responce::CreateHandshake(const connflag_t& flag, const token_t token)
 	responce.Type = ResponceType::HandshakeSuccessfull;
 	responce.Handshake.Flag = flag;
 	responce.Handshake.Token = token;
+	responce.Handshake.SecureMode = 0;
+	responce.Handshake.Reserved[0] = 0;
+	responce.Handshake.Reserved[1] = 0;
+	responce.Handshake.Reserved[2] = 0;
+	responce.Handshake.IntegrityTag = 0;
+	std::memset(responce.Handshake.ServerPublicKey, 0, sizeof(responce.Handshake.ServerPublicKey));
 
+	return responce;
+}
+
+Responce Responce::CreateHandshakeSecure(const connflag_t& flag, const token_t token, std::uint64_t integrityTag, const std::uint8_t serverPublicKey[32])
+{
+	Responce responce{};
+	responce.Type = ResponceType::HandshakeSuccessfull;
+	responce.Handshake.Flag = flag;
+	responce.Handshake.Token = token;
+	responce.Handshake.SecureMode = 1;
+	responce.Handshake.Reserved[0] = 0;
+	responce.Handshake.Reserved[1] = 0;
+	responce.Handshake.Reserved[2] = 0;
+	responce.Handshake.IntegrityTag = integrityTag;
+	std::memcpy(responce.Handshake.ServerPublicKey, serverPublicKey, sizeof(responce.Handshake.ServerPublicKey));
 	return responce;
 }
 

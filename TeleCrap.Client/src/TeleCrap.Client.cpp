@@ -1,4 +1,5 @@
 ﻿#include <exception>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <csignal>
@@ -65,8 +66,19 @@ static void processUpdate(const Update& update)
     {
         case UpdateType::Message:
         {
-            MemoryCache::storeMessageToChat(update.MessageSent.DestChat.Id, update.MessageSent, true);
-            TerminalUI::addMessage(update.MessageSent);
+            const Message& m = update.MessageSent;
+            const bool serverBroadcast = (m.DestChat.Id == 0) || (std::strcmp(m.DestChat.Name.c_str(), "server_alert") == 0);
+
+            // Глобальное объявление сервера: не кладём в кэш чата (иначе коллизия id=1 с реальным чатом и optional::value() в UI).
+            if (serverBroadcast)
+            {
+                const std::string line = std::string("[") + m.From.Name.c_str() + "] " + m.Text.c_str();
+                TerminalUI::addMessage(line);
+                break;
+            }
+
+            MemoryCache::storeMessageToChat(m.DestChat.Id, m, true);
+            TerminalUI::addMessage(m);
             break;
         }
 
@@ -157,7 +169,12 @@ static void listenUpdates(Transport* transport)
         {
             std::cout << "[Updates] Runtime error : " << err.what() << std::endl;
             continue;
-		}
+        }
+        catch (const std::exception& err)
+        {
+            std::cout << "[Updates] Error : " << err.what() << std::endl;
+            continue;
+        }
     }
 }
 
@@ -221,9 +238,9 @@ int main(int argc, char** argv)
         srand(static_cast<unsigned int>(time(0)));
 
 #ifdef _WIN32
-        SetConsoleTitleA("TeleCrap Messenger v0.4");
+        SetConsoleTitleA("TeleCrap Messenger v0.5");
 #else
-        std::cout << "\033]0;" << "TeleCrap Messenger v0.3" << "\007";
+        std::cout << "\033]0;" << "TeleCrap Messenger v0.5" << "\007";
 #endif
 
 		Console::Init();
@@ -232,10 +249,11 @@ int main(int argc, char** argv)
         Log::Info("Main", "Инициализация сервисов...");
         Transport::Init();
         
-        Log::Info("Main", "Попытка подключиться к серверу...");
-        SocketHelper::ServerAddress = inet_addr(Settings.ServerIP.c_str());
-		SocketHelper::ServerPort = Settings.ServerPort;
-
+        Log::Info("Main", "Подключение к серверу : " + Settings.ServerIP + ":" + std::to_string(Settings.ServerPort));
+        SocketHelper::ServerPort = Settings.ServerPort;
+        if (!SocketHelper::ResolveServerHost(Settings.ServerIP))
+            throw std::runtime_error("Не удалось разрешить адрес сервера (DNS / IPv4): \"" + Settings.ServerIP + "\"");
+        
         transport = Transport::Client();
 		std::thread(listenUpdates, transport).detach();
 

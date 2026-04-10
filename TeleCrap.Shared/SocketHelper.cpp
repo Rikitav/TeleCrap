@@ -1,7 +1,12 @@
 ﻿#include "pch.h"
 
+#include <cctype>
 #include <stdexcept>
 #include <string>
+
+#ifndef _WIN32
+#include <netdb.h>
+#endif
 
 /*
 #ifdef _WIN32
@@ -74,6 +79,44 @@ static sockerr_t connectSocket(const SOCKET socket, sockaddr_in& addr)
 u_long SocketHelper::ServerAddress = inet_addr("127.0.0.1");
 u_short SocketHelper::ServerPort = 7777;
 
+bool SocketHelper::ResolveServerHost(const std::string& hostNameOrIPv4)
+{
+    std::string host = hostNameOrIPv4;
+    while (!host.empty() && std::isspace(static_cast<unsigned char>(host.front())))
+        host.erase(host.begin());
+    
+    while (!host.empty() && std::isspace(static_cast<unsigned char>(host.back())))
+        host.pop_back();
+
+    if (host.empty())
+        return false;
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    addrinfo* resolved = nullptr;
+    const int rc = getaddrinfo(host.c_str(), nullptr, &hints, &resolved);
+    if (rc != 0 || resolved == nullptr)
+        return false;
+
+    bool ok = false;
+    for (const addrinfo* p = resolved; p != nullptr; p = p->ai_next)
+    {
+        if (p->ai_family != AF_INET || p->ai_addr == nullptr)
+            continue;
+
+        const auto* sin = reinterpret_cast<const sockaddr_in*>(p->ai_addr);
+        ServerAddress = sin->sin_addr.s_addr;
+        ok = true;
+        break;
+    }
+
+    freeaddrinfo(resolved);
+    return ok;
+}
+
 SOCKET SocketHelper::OpenHandshake()
 {
     SOCKET listener = openSocket();
@@ -110,7 +153,12 @@ SOCKET SocketHelper::ConnectHandshake()
     sockerr_t err = connectSocket(transport, addr);
     if (err != ERR_OK)
     {
+        int lastError = WSAGetLastError();
         Close(&transport);
+        
+        if (lastError == WSAECONNREFUSED)
+            throw connection_refused_error();
+
         throw request_error("Failed to connect Handshake listener socket.", err);
     }
 
@@ -380,6 +428,74 @@ sockerr_t SocketHelper::ReceiveExactly(const SOCKET* transportSocket, T& buffer)
 
 template sockerr_t SocketHelper::ReceiveExactly<Request>(const SOCKET* transportSocket, Request& buffer);
 template sockerr_t SocketHelper::ReceiveExactly<Responce>(const SOCKET* transportSocket, Responce& buffer);
+
+sockerr_t SocketHelper::SendBuffer(const SOCKET* transportSocket, const uint8_t* data, size_t size)
+{
+    size_t sent = 0;
+    while (sent < size)
+    {
+        const int chunk = static_cast<int>(size - sent);
+        int bytesSent = send(
+            *transportSocket,
+            reinterpret_cast<const char*>(data + sent),
+            chunk, 0);
+
+        if (bytesSent == SOCKET_ERROR)
+        {
+#ifdef _WIN32
+            int lastError = WSAGetLastError();
+            if (lastError == WSAECONNABORTED || lastError == WSAECONNRESET)
+                throw disconnected_error();
+#else
+            int lastError = errno;
+            if (lastError == ECONNABORTED || lastError == ECONNRESET || lastError == EPIPE)
+                throw disconnected_error();
+#endif
+            return SOCKET_ERROR;
+        }
+
+        if (bytesSent == 0)
+            throw disconnected_error();
+
+        sent += static_cast<size_t>(bytesSent);
+    }
+
+    return ERR_OK;
+}
+
+sockerr_t SocketHelper::ReceiveBuffer(const SOCKET* transportSocket, uint8_t* data, size_t size)
+{
+    size_t received = 0;
+    while (received < size)
+    {
+        const int chunk = static_cast<int>(size - received);
+        int bytesRead = recv(
+            *transportSocket,
+            reinterpret_cast<char*>(data + received),
+            chunk, 0);
+
+        if (bytesRead == SOCKET_ERROR)
+        {
+#ifdef _WIN32
+            int lastError = WSAGetLastError();
+            if (lastError == WSAECONNABORTED || lastError == WSAECONNRESET)
+                throw disconnected_error();
+#else
+            int lastError = errno;
+            if (lastError == ECONNABORTED || lastError == ECONNRESET || lastError == EPIPE)
+                throw disconnected_error();
+#endif
+            return SOCKET_ERROR;
+        }
+
+        if (bytesRead == 0)
+            throw disconnected_error();
+
+        received += static_cast<size_t>(bytesRead);
+    }
+
+    return ERR_OK;
+}
 
 void SocketHelper::Close(SOCKET* socketInfo)
 {

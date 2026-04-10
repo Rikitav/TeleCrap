@@ -11,6 +11,10 @@ struct HandshakeRequest
 {
 	connflag_t Flag;
 	version_t Version;
+	std::uint8_t SecureMode;
+	std::uint8_t Reserved;
+	std::uint64_t IntegrityTag;
+	std::uint8_t ClientPublicKey[32];
 };
 
 struct AuthRequest
@@ -121,6 +125,7 @@ struct Request
 	/// Создает handshake-запрос для установки протокольной сессии.
 	/// </summary>
 	static Request CreateHandshake(const connflag_t& flag);
+	static Request CreateHandshakeSecure(const connflag_t& flag, std::uint64_t integrityTag, const std::uint8_t clientPublicKey[32]);
 
 	/// <summary>
 	/// Создает запрос логина пользователя.

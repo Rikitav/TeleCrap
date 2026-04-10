@@ -29,31 +29,12 @@
 #include "../include/Database.h"
 #include "../include/AddonManager.h"
 
-// ������������� �������:
-// ���� ������ ����� � "������" ������� � ����������� ��������� ���������� �������.
-// ������ ������ ������������ ��������� TCP-�������, � ������ ���������� "push" �������
-// (Update) � ������� �� userId. ������ ������������ ����������� ��� ������� ����� GetUpdates.
-//
-// ������ ����������/�����������:
-// - ������� UpdatesCache �������� ��������� mutex �� ������������ (UpdatesMutex[userId]).
-// - �������� Transport* -> userId (ClientUsers) � ������ �������� ������� (ClientSockets)
-//   ������ �������� ������������ (CredentialsMutex).
-// - ����� ��������� ��� ����������� �������� Update "� ���" �� ������: ���������� ������������
-//   ��������� (SendRequestList(GetUpdates)) �� ������� �������.
-
 static std::atomic<bool> IsActive;
 static std::recursive_mutex CredentialsMutex;
-
-// ��� �������� ���������� (transport ����� � ���� � ��������� � ������ �������).
 static std::vector<const Transport*> ClientSockets;
-
-// �������� "���������� -> ������������" ��� �������������� ��������.
 static std::map<const Transport*, userid_t> ClientUsers;
 
-// Per-user ���������� �������� UpdatesCache. ������������ map, ����� mutex ���������� ������ �� userId.
 static std::map<userid_t, std::mutex> UpdatesMutex;
-
-// ������� push-���������� �� ������������. ������ ������ � ����� RequestType::GetUpdates.
 static std::map<userid_t, std::vector<Update>> UpdatesCache;
 
 static bool isDirectChat(std::optional<ChatInfo> chatInfo)
@@ -71,9 +52,8 @@ static bool isUserInChat(const UserInfo& user, const ChatInfo& chat)
     return false;
 }
 
-static std::string_view trimSv(std::string_view sv)
+static std::string_view trimView(std::string_view sv)
 {
-    // trim ��� ���������: �������� �� std::string_view, ������ �������/������� ��������.
     while (!sv.empty() && std::isspace(static_cast<unsigned char>(sv.front())))
         sv.remove_prefix(1);
 
@@ -85,11 +65,7 @@ static std::string_view trimSv(std::string_view sv)
 
 static std::optional<UserInfo> resolveUserToken(std::string_view tok)
 {
-    // ������ ������ ������������ ��� ������ ���������.
-    // �������:
-    // - @name  (����� ������������ �� �����)
-    // - $id    (����� ������������ �� id)
-    tok = trimSv(tok);
+    tok = trimView(tok);
     if (tok.empty())
         return std::nullopt;
 
@@ -108,8 +84,6 @@ static std::optional<UserInfo> resolveUserToken(std::string_view tok)
 
 static void pushUpdateToUser(userid_t userId, const Update& update)
 {
-    // ��� �� ����������� ������������, ����� ������������ ������ (������ ����/�������)
-    // ����� ������ ���������� ������ ����������� ��� ����������� lock.
     std::lock_guard<std::mutex> updatesLock(UpdatesMutex[userId]);
     UpdatesCache[userId].push_back(update);
 }
@@ -186,23 +160,23 @@ size_t Backend::pushGlobalAlert(const std::string& text)
     Update u{};
     u.Type = UpdateType::Message;
     u.MessageSent.Id = 0;
-    u.MessageSent.DestChat.Id = SYSTEM_FROMID;
+    // Id=0: не реальный чат в БД (SQLite обычно с 1). Не использовать SYSTEM_FROMID (1) — совпадает с первым чатом.
+    u.MessageSent.DestChat.Id = 0;
     u.MessageSent.DestChat.Name = "server_alert";
     u.MessageSent.DestChat.Type = ChatType::Group;
     u.MessageSent.From.Id = SYSTEM_FROMID;
     u.MessageSent.From.Name = "SERVER";
-    u.MessageSent.Timestamp = static_cast<timestamp_t>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+    u.MessageSent.Timestamp = static_cast<timestamp_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     u.MessageSent.Text = text;
 
     std::lock_guard<std::recursive_mutex> credentialsLock(CredentialsMutex);
     size_t sent = 0;
+
     for (const auto& [transport, userId] : ClientUsers)
     {
         (void)transport;
         pushUpdateToUser(userId, u);
-        ++sent;
+        sent += 1;
     }
 
     return sent;
@@ -210,10 +184,8 @@ size_t Backend::pushGlobalAlert(const std::string& text)
 
 static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requestor, CommitMessageRequest& request, ChatInfo& chat)
 {
-    // Slash-������� �������������� �� ������� �� ���������� ��������� ��� �������� ������.
-    // ���� �������� ��� "����������" ������� ���������, ��� � ������� ������� (��. AddonManager).
     std::string raw(request.Content.c_str());
-    raw = trimSv(raw);
+    raw = trimView(raw);
     if (raw.empty() || raw.front() != '/')
         return false;
 
@@ -221,7 +193,7 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     const size_t sp = raw.find(' ');
 
     std::string cmd = (sp == std::string::npos) ? raw : raw.substr(0, sp);
-    std::string rest = (sp == std::string::npos) ? std::string{} : std::string(trimSv(raw.substr(sp + 1)));
+    std::string rest = (sp == std::string::npos) ? std::string{} : std::string(trimView(raw.substr(sp + 1)));
 
     auto chatModelGroup = [&chat]()
     {
@@ -231,17 +203,16 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     if (cmd != "kick" && cmd != "ban" && cmd != "unban" && cmd != "rename")
         return AddonManager::ExecuteCommand(cmd, rest, const_cast<Transport*>(transport), request, requestor, chat);
 
-    // ������� ��������� ��������� ������ � ��������� ����� � ������ ��������� ����.
     const bool direct = isDirectChat(chat);
     if (direct)
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("��� ������� ������ ��� ��������� �����"));
+        Protocol::SendResponce(*transport, Responce::CreateError("невозможно выполнить служебную команду в личном чате"));
         return true;
     }
 
     if (chat.OwnerId != requestor.Id)
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("������ �������� ���� ����� ������������ ��� �������"));
+        Protocol::SendResponce(*transport, Responce::CreateError("только владелец может выполнить эту команду"));
         return true;
     }
 
@@ -249,7 +220,7 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     {
         if (rest.empty())
         {
-            Protocol::SendResponce(*transport, Responce::CreateError("/rename: ������� ����� ���"));
+            Protocol::SendResponce(*transport, Responce::CreateError("/rename: [new_name]"));
             return true;
         }
 
@@ -260,15 +231,14 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
         std::optional<ChatInfo> refreshed = Database::findChatById(chat.Id);
         if (!refreshed.has_value())
         {
-            Protocol::SendResponce(*transport, Responce::CreateError("��� �� ������"));
+            Protocol::SendResponce(*transport, Responce::CreateError("не удалось переименовать"));
             return true;
         }
 
         Chat renamed = chatModelGroup();
         renamed.Name = refreshed->Name;
 
-        Message ack = Database::commitSystemMessage(refreshed.value(), request.Timestamp,
-            std::string("��� ������������ � \"") + std::string(refreshed->Name.c_str()) + "\"");
+        Message ack = Database::commitSystemMessage(refreshed.value(), request.Timestamp, std::string("имя чата изменено на \"") + std::string(refreshed->Name.c_str()) + "\"");
         Protocol::SendResponce(*transport, Responce::CreateCommitMessage(ack));
 
         Update u{};
@@ -279,6 +249,7 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
         {
             if (member.Id == requestor.Id)
                 continue;
+
             pushUpdateToUser(member.Id, u);
         }
 
@@ -286,10 +257,10 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     }
 
     const size_t tsp = rest.find(' ');
-    const std::string_view targetTok = (tsp == std::string::npos) ? rest : trimSv(rest.substr(0, tsp));
+    const std::string_view targetTok = (tsp == std::string::npos) ? rest : trimView(rest.substr(0, tsp));
     if (targetTok.empty())
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("������� @��� ��� $id"));
+        Protocol::SendResponce(*transport, Responce::CreateError("введите @имя или $id"));
         return true;
     }
 
@@ -300,19 +271,19 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     }
     catch (...)
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("�������� $id"));
+        Protocol::SendResponce(*transport, Responce::CreateError("введите $id"));
         return true;
     }
 
     if (!target.has_value())
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("������������ �� ������"));
+        Protocol::SendResponce(*transport, Responce::CreateError("пользователь не найден"));
         return true;
     }
 
     if (target->Id == SYSTEM_FROMID)
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("������ ��������� � ���������� ������������"));
+        Protocol::SendResponce(*transport, Responce::CreateError("ты как сюда попал вообще, колдун?"));
         return true;
     }
 
@@ -320,14 +291,12 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     {
         if (!Database::isUserBannedFromChat(chat.Id, target->Id))
         {
-            Protocol::SendResponce(*transport, Responce::CreateError("������������ �� � ����"));
+            Protocol::SendResponce(*transport, Responce::CreateError("пользователь не забанен"));
             return true;
         }
 
         Database::unbanUserInChat(chat.Id, target->Id);
-
-        Message ack = Database::commitSystemMessage(chat, request.Timestamp,
-            std::string(target->Name.c_str()) + std::string(" ��������"));
+        Message ack = Database::commitSystemMessage(chat, request.Timestamp, std::string(target->Name.c_str()) + std::string(" разбанен"));
         Protocol::SendResponce(*transport, Responce::CreateCommitMessage(ack));
 
         Update u{};
@@ -344,6 +313,7 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
         {
             if (uid == requestor.Id)
                 continue;
+
             pushUpdateToUser(uid, u);
         }
 
@@ -352,7 +322,7 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
 
     if (target->Id == chat.OwnerId)
     {
-        Protocol::SendResponce(*transport, Responce::CreateError("������ ��������� � ��������� ����"));
+        Protocol::SendResponce(*transport, Responce::CreateError("только владелец может выполнить эту команду"));
         return true;
     }
 
@@ -360,15 +330,14 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
     {
         if (!isUserInChat(*target, chat))
         {
-            Protocol::SendResponce(*transport, Responce::CreateError("������������ �� � ����"));
+            Protocol::SendResponce(*transport, Responce::CreateError("пользователь не учасник этого чата"));
             return true;
         }
 
         std::vector<UserInfo> members = Database::findMembersByChat(chat);
         Database::removeMemberFromChat(chat.Id, target->Id);
 
-        Message ack = Database::commitSystemMessage(chat, request.Timestamp,
-            std::string(target->Name.c_str()) + std::string(" �������� �� ����"));
+        Message ack = Database::commitSystemMessage(chat, request.Timestamp, std::string(target->Name.c_str()) + std::string(" исключен из чата"));
         Protocol::SendResponce(*transport, Responce::CreateCommitMessage(ack));
 
         Update u{};
@@ -393,8 +362,7 @@ static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requesto
         Database::banUserInChat(chat, *target);
         Database::removeMemberFromChat(chat.Id, target->Id);
 
-        Message ack = Database::commitSystemMessage(chat, request.Timestamp,
-            std::string(target->Name.c_str()) + std::string(" �������"));
+        Message ack = Database::commitSystemMessage(chat, request.Timestamp, std::string(target->Name.c_str()) + std::string(" забанен"));
         Protocol::SendResponce(*transport, Responce::CreateCommitMessage(ack));
 
         Update u{};
@@ -489,7 +457,6 @@ std::optional<ChatInfo> Backend::findChatByQuery(const UserInfo& requestor, cons
 {
     switch (chatQuery.buffer[0])
     {
-        // ������ ������������ �� ����� (��� ��)
         case '@':
         {
             std::optional<UserInfo> user = Database::findUserByName(std::string_view(chatQuery.buffer + 1));
@@ -509,7 +476,6 @@ std::optional<ChatInfo> Backend::findChatByQuery(const UserInfo& requestor, cons
             return chat;
         }
 
-        // ������ ������������ �� ID (��� ��)
         case '$':
         {
             std::optional<UserInfo> user = Database::findUserById(std::stoul(chatQuery.buffer + 1));
@@ -529,7 +495,6 @@ std::optional<ChatInfo> Backend::findChatByQuery(const UserInfo& requestor, cons
             return chat;
         }
 
-        // ������ ��������� ��� �� ����
         case '#':
         {
             std::optional<ChatInfo> chat = Database::findChatById(std::stoul(chatQuery.buffer + 1));
@@ -541,7 +506,6 @@ std::optional<ChatInfo> Backend::findChatByQuery(const UserInfo& requestor, cons
             return chat;
         }
 
-        // ������ ��������� ��� �� �����
         default:
         {
             std::optional<ChatInfo> chat = Database::findChatByName(chatQuery);
@@ -1005,20 +969,6 @@ void Backend::processRequest(const Transport* transport, const Request& request)
                     Protocol::SendResponce(*transport, Responce::CreateError("You are not a member of this chat"));
                     return;
                 }
-
-                /*
-                bool commandExecuted = tryHandleSlashCommand(transport, requestor.value(), *const_cast<CommitMessageRequest*>(&request.CommitMessage), chat.value());
-                if (commandExecuted)
-                {
-                    Message message = Database::commitMessage(requestor.value(), request.CommitMessage);
-                    Protocol::SendResponce(*transport, Responce::CreateCommitMessage(message));
-                    Log::Trace("Messages", std::string("Committed message id=") + std::to_string(static_cast<long long>(message.Id)) +
-                        " chat=" + std::to_string(message.DestChat.Id) +
-                        " from=" + std::to_string(message.From.Id));
-
-                    return;
-                }
-                */
 
                 Message message = Database::commitMessage(requestor.value(), request.CommitMessage);
                 Protocol::SendResponce(*transport, Responce::CreateCommitMessage(message));

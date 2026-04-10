@@ -11,6 +11,12 @@
 
 typedef int32_t(*getRemainingFunc)(Responce&);
 
+class connection_refused_error : public std::runtime_error
+{
+public:
+    connection_refused_error() : std::runtime_error("Connection was refused by remote host") {}
+};
+
 /// <summary>
 /// Исключение, сигнализирующее о закрытии соединения удаленной стороной.
 /// </summary>
@@ -50,6 +56,9 @@ public:
 class Protocol
 {
 public:
+    static void RegisterSecureSession(const Transport* transport);
+    static void UnregisterSecureSession(const Transport* transport);
+
     /// <summary>
     /// Принимает входящее handshake-подключение и возвращает транспорт клиента.
     /// </summary>

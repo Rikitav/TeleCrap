@@ -667,8 +667,15 @@ void appendMessageToChatUnlocked(const Message& incomingMessage)
     if (incomingMessage.From.Id != SYSTEM_FROMID && !isMessageFromSelf && !isCurrentlyViewingChat)
     {
         unreadMessageCountByChatId[incomingMessage.DestChat.Id]++;
-        unreadChatNamesByChatId[incomingMessage.DestChat.Id] = MemoryCache::getChatMemory(incomingMessage.DestChat.Id).value()->ChatInfo.Name;
+        const auto mem = MemoryCache::getChatMemory(incomingMessage.DestChat.Id);
+        std::string label = mem.has_value()
+            ? std::string(mem.value()->ChatInfo.Name.c_str())
+            : std::string(incomingMessage.DestChat.Name.c_str());
 
+        if (label.empty())
+            label = "#" + std::to_string(incomingMessage.DestChat.Id);
+
+        unreadChatNamesByChatId[incomingMessage.DestChat.Id] = std::move(label);
         renderInterfaceUnlocked();
         return;
     }

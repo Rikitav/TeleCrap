@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <mutex>
 #include <exception>
@@ -10,6 +11,10 @@
 #include <vector>
 #include <algorithm>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 #include <telecrap/Models.h>
 #include <telecrap/Request.h>
 #include <telecrap/Log.h>
@@ -20,8 +25,73 @@
 #include "../include/Database.h"
 #include "../include/ChatHistory.h"
 
-static std::string Salt = "MEDIC GAMING!";
 static std::recursive_mutex DbMutex;
+
+// Соль привязана к машине: хеши паролей в telecrap.db не переносятся на другой хост без сброса паролей.
+static std::string readMachineBoundSalt()
+{
+#ifdef _WIN32
+    HKEY key = nullptr;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, R"(SOFTWARE\Microsoft\Cryptography)", 0, KEY_READ | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS)
+        return {};
+
+    char buffer[256]{};
+    DWORD bufferSize = sizeof(buffer);
+    DWORD valueType = 0;
+    const LSTATUS st = RegQueryValueExA(key, "MachineGuid", nullptr, &valueType,reinterpret_cast<LPBYTE>(buffer), &bufferSize);
+    RegCloseKey(key);
+
+    if (st != ERROR_SUCCESS || (valueType != REG_SZ && valueType != REG_EXPAND_SZ))
+        return {};
+
+    return std::string(buffer);
+#else
+    auto readOneLineFile = [](const char* path) -> std::string
+        {
+            std::ifstream file(path);
+            if (!file)
+                return {};
+
+            std::string line;
+            if (!std::getline(file, line))
+                return {};
+            
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+                line.pop_back();
+            
+            return line;
+        };
+
+    std::string id = readOneLineFile("/etc/machine-id");
+    if (!id.empty())
+        return id;
+
+    id = readOneLineFile("/var/lib/dbus/machine-id");
+    if (!id.empty())
+        return id;
+
+    return readOneLineFile("/sys/class/dmi/id/product_uuid");
+#endif
+}
+
+static const std::string& passwordSalt()
+{
+    static std::string value;
+    static std::once_flag once;
+    std::call_once(once, []
+    {
+        std::string machine = readMachineBoundSalt();
+        if (machine.empty())
+        {
+            Log::Info("Database", "WARN: не удалось прочитать machine-id (реестр / machine-id / DMI); резервная соль — слабее привязка к машине.");
+            machine = "MEDIC GAMING!";
+        }
+        
+        value = machine + "|TeleCrap-password-pepper-v1";
+    });
+
+    return value;
+}
 
 static size_t hashPassword(const std::string& salt, const std::string& password)
 {
@@ -224,8 +294,8 @@ std::optional<DirectChatInfo> Database::findDirectChat(const userid_t user1Id, c
 {
     std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
     SQLite::Statement query(*DbSql, "SELECT ChatId, User1Id, User2Id FROM DirectChats WHERE User1Id = ? AND User2Id = ?");
-    query.bind(1, std::min(user1Id, user2Id));
-    query.bind(2, std::max(user1Id, user2Id));
+    query.bind(1, (std::min)(user1Id, user2Id));
+    query.bind(2, (std::max)(user1Id, user2Id));
 
     if (query.executeStep()) // Если нашли строку
     {
@@ -252,14 +322,10 @@ std::optional<UserInfo> Database::findDirectChatPeer(const chatid_t chatId, cons
     const userid_t u1 = query.getColumn(0).getUInt();
     const userid_t u2 = query.getColumn(1).getUInt();
 
-    userid_t peer = 0;
-    if (requestorId == u1)
-        peer = u2;
-    else if (requestorId == u2)
-        peer = u1;
-    else
+    if (requestorId != u1 && requestorId != u2)
         return std::nullopt;
 
+    userid_t peer = requestorId == u1 ? u2 : u1;
     return findUserById(peer);
 }
 
@@ -357,7 +423,7 @@ std::vector<Message> Database::findMessagesByChat(const ChatInfo& chat)
 
 bool Database::verifyPassword(const std::string& password, const std::size_t& salted_hash)
 {
-    return hashPassword(Salt, password) == salted_hash;
+    return hashPassword(passwordSalt(), password) == salted_hash;
 }
 
 UserInfo Database::createUser(const fixed_string<CHATNAME_MAXLENGTH>& username, const fixed_string<PASSWORD_MAXLENGTH>& password)
@@ -367,7 +433,7 @@ UserInfo Database::createUser(const fixed_string<CHATNAME_MAXLENGTH>& username, 
     try
     {
         SQLite::Transaction transaction(*DbSql);
-        size_t passwordHash = hashPassword(Salt, password.c_str());
+        size_t passwordHash = hashPassword(passwordSalt(), password.c_str());
 
         SQLite::Statement queryChat(*DbSql, "INSERT INTO Users (Name, PasswordHash) VALUES (?, ?)");
         queryChat.bind(1, username.c_str());
@@ -448,8 +514,8 @@ DirectChatInfo Database::createDirectChat(const UserInfo& user1, const UserInfo&
 
         SQLite::Statement queryDirect(*DbSql, "INSERT INTO DirectChats (ChatId, User1Id, User2Id) VALUES (?, ?, ?)");
         queryDirect.bind(1, directChat.Id);
-        queryDirect.bind(2, std::min(user1.Id, user2.Id));
-        queryDirect.bind(3, std::max(user1.Id, user2.Id));
+        queryDirect.bind(2, (std::min)(user1.Id, user2.Id));
+        queryDirect.bind(3, (std::max)(user1.Id, user2.Id));
         queryDirect.exec();
 
         transaction.commit();
@@ -471,11 +537,19 @@ DirectChatInfo Database::createDirectChat(const UserInfo& user1, const UserInfo&
 
 void Database::joinChatMember(const ChatInfo& chatInfo, const UserInfo& userInfo)
 {
-    std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
-    SQLite::Statement q(*DbSql, "INSERT OR IGNORE INTO Users_has_Chats (UserId, ChatId) VALUES (?, ?)");
-    q.bind(1, static_cast<int64_t>(userInfo.Id));
-    q.bind(2, static_cast<int64_t>(chatInfo.Id));
-    q.exec();
+    try
+    {
+        std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
+        SQLite::Statement q(*DbSql, "INSERT OR IGNORE INTO Users_has_Chats (UserId, ChatId) VALUES (?, ?)");
+        q.bind(1, static_cast<int64_t>(userInfo.Id));
+        q.bind(2, static_cast<int64_t>(chatInfo.Id));
+        q.exec();
+    }
+    catch (std::exception& exc)
+    {
+        Log::Error("Database", std::string("joinChatMember failed: ") + exc.what());
+        throw;
+    }
 }
 
 Message Database::commitMessage(UserInfo& senderInfo, const CommitMessageRequest& message)
@@ -558,46 +632,86 @@ Message Database::commitSystemMessage(const ChatInfo& chat, timestamp_t ts, cons
 
 bool Database::isUserBannedFromChat(chatid_t chatId, userid_t userId)
 {
-    std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
-    SQLite::Statement q(*DbSql, "SELECT 1 FROM Chats_has_BannedUsers WHERE ChatId = ? AND UserId = ? LIMIT 1");
-    q.bind(1, static_cast<int64_t>(chatId));
-    q.bind(2, static_cast<int64_t>(userId));
-    return q.executeStep();
+    try
+    {
+        std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
+        SQLite::Statement q(*DbSql, "SELECT 1 FROM Chats_has_BannedUsers WHERE ChatId = ? AND UserId = ? LIMIT 1");
+        q.bind(1, static_cast<int64_t>(chatId));
+        q.bind(2, static_cast<int64_t>(userId));
+        return q.executeStep();
+    }
+    catch (std::exception& exc)
+    {
+        Log::Error("Database", std::string("commitMessage failed: ") + exc.what());
+        throw;
+    }
 }
 
 void Database::banUserInChat(const ChatInfo& chat, const UserInfo& target)
 {
-    std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
-    SQLite::Statement q(*DbSql, "INSERT OR IGNORE INTO Chats_has_BannedUsers (ChatId, UserId) VALUES (?, ?)");
-    q.bind(1, static_cast<int64_t>(chat.Id));
-    q.bind(2, static_cast<int64_t>(target.Id));
-    q.exec();
+    try
+    {
+        std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
+        SQLite::Statement q(*DbSql, "INSERT OR IGNORE INTO Chats_has_BannedUsers (ChatId, UserId) VALUES (?, ?)");
+        q.bind(1, static_cast<int64_t>(chat.Id));
+        q.bind(2, static_cast<int64_t>(target.Id));
+        q.exec();
+    }
+    catch (std::exception& exc)
+    {
+        Log::Error("Database", std::string("banUserInChat failed: ") + exc.what());
+        throw;
+    }
 }
 
 void Database::unbanUserInChat(chatid_t chatId, userid_t userId)
 {
-    std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
-    SQLite::Statement q(*DbSql, "DELETE FROM Chats_has_BannedUsers WHERE ChatId = ? AND UserId = ?");
-    q.bind(1, static_cast<int64_t>(chatId));
-    q.bind(2, static_cast<int64_t>(userId));
-    q.exec();
+    try
+    {
+        std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
+        SQLite::Statement q(*DbSql, "DELETE FROM Chats_has_BannedUsers WHERE ChatId = ? AND UserId = ?");
+        q.bind(1, static_cast<int64_t>(chatId));
+        q.bind(2, static_cast<int64_t>(userId));
+        q.exec();
+    }
+    catch (std::exception& exc)
+    {
+        Log::Error("Database", std::string("unbanUserInChat failed: ") + exc.what());
+        throw;
+    }
 }
 
 void Database::removeMemberFromChat(chatid_t chatId, userid_t userId)
 {
-    std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
-    SQLite::Statement q(*DbSql, "DELETE FROM Users_has_Chats WHERE ChatId = ? AND UserId = ?");
-    q.bind(1, static_cast<int64_t>(chatId));
-    q.bind(2, static_cast<int64_t>(userId));
-    q.exec();
+    try
+    {
+        std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
+        SQLite::Statement q(*DbSql, "DELETE FROM Users_has_Chats WHERE ChatId = ? AND UserId = ?");
+        q.bind(1, static_cast<int64_t>(chatId));
+        q.bind(2, static_cast<int64_t>(userId));
+        q.exec();
+    }
+    catch (std::exception& exc)
+    {
+        Log::Error("Database", std::string("removeMemberFromChat failed: ") + exc.what());
+        throw;
+    }
 }
 
 void Database::renameChat(const ChatInfo& chat, const fixed_string<CHATNAME_MAXLENGTH>& newName)
 {
-    std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
-    SQLite::Statement q(*DbSql, "UPDATE Chats SET Name = ? WHERE Id = ?");
-    q.bind(1, newName.c_str());
-    q.bind(2, static_cast<int64_t>(chat.Id));
-    q.exec();
+    try
+    {
+        std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
+        SQLite::Statement q(*DbSql, "UPDATE Chats SET Name = ? WHERE Id = ?");
+        q.bind(1, newName.c_str());
+        q.bind(2, static_cast<int64_t>(chat.Id));
+        q.exec();
+    }
+    catch (std::exception& exc)
+    {
+        Log::Error("Database", std::string("renameChat failed: ") + exc.what());
+        throw;
+    }
 }
 

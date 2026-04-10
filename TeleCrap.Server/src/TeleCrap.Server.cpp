@@ -99,15 +99,16 @@ int main()
     try
     {
         Console::Init();
+        Log::SetPostWriteHook(&ServerCLI::postLogRenderPrompt);
         Log::Info("Main", "TeleCrap Server is starting...");
         signal(SIGINT, sigintHandler);
         signal(SIGABRT, sigintHandler);
         srand(static_cast<unsigned int>(time(0)));
 
 #ifdef _WIN32
-        SetConsoleTitleA("TeleCrap Server v0.3");
+        SetConsoleTitleA("TeleCrap Server v0.5");
 #else
-        std::cout << "\033]0;" << "TeleCrap Server v0.4" << "\007";
+        std::cout << "\033]0;" << "TeleCrap Server v0.5" << "\007";
 #endif
 
         Log::Info("Main", "Initializing services...");

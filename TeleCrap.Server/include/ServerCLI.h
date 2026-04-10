@@ -28,6 +28,11 @@ public:
     static void renderPrompt();
 
     /// <summary>
+    /// Перерисовывает prompt текущего ввода.
+    /// </summary>
+    static void postLogRenderPrompt();
+
+    /// <summary>
     /// Обрабатывает введенный символ.
     /// </summary>
     static void hookInputChar(char c);

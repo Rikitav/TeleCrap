@@ -33,6 +33,10 @@ target_link_libraries(telecrap_server
         telecrap_libs_sol
 )
 
+if(WIN32)
+    target_link_libraries(telecrap_server PRIVATE advapi32)
+endif()
+
 if(UNIX AND NOT APPLE)
     target_link_libraries(telecrap_server PRIVATE pthread dl m)
 endif()

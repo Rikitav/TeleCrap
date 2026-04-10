@@ -31,8 +31,10 @@ public:
 	/// Пишет трассировочное сообщение.
 	/// </summary>
 	static void Trace(std::string_view facility, std::string_view message);
+	static void SetPostWriteHook(void(*hook)());
 
 private:
 	static void write(Level level, std::string_view facility, std::string_view message);
+	static void(*postWriteHook)();
 };
 

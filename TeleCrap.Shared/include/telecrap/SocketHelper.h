@@ -2,6 +2,7 @@
 
 #include <string>
 #include <cstdint>
+#include <vector>
 
 #ifdef _WIN32
     // Windows
@@ -52,6 +53,12 @@ public:
     /// Статическая переменная, представляющая номер порта сервера.
     /// </summary>
     static u_short ServerPort;
+
+    /// <summary>
+    /// Разрешает IPv4-адрес сервера по доменному имени или числовой записи (getaddrinfo). Windows и Linux.
+    /// При успехе обновляет ServerAddress (сетевой порядок байт).
+    /// </summary>
+    static bool ResolveServerHost(const std::string& hostNameOrIPv4);
 
     /// <summary>
     /// Открывает сокет со стороны сервера.
@@ -146,6 +153,16 @@ public:
     /// <returns>Код ошибки sockerr_t, указывающий на результат операции: успех при успешном приеме всех запрошенных байт или соответствующий код ошибки при сбое.</returns>
     template <typename T>
     static sockerr_t ReceiveExactly(const SOCKET* transportSocket, T& buffer);
+
+    /// <summary>
+    /// Отправляет произвольный буфер байт.
+    /// </summary>
+    static sockerr_t SendBuffer(const SOCKET* transportSocket, const uint8_t* data, size_t size);
+
+    /// <summary>
+    /// Считывает указанное количество байт в буфер.
+    /// </summary>
+    static sockerr_t ReceiveBuffer(const SOCKET* transportSocket, uint8_t* data, size_t size);
 
     /// <summary>
     /// Закрывает указанный сокет.

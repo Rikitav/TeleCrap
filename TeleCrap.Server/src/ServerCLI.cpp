@@ -36,12 +36,12 @@ static void utf8PopBack(std::string& s)
         s.erase(i - 1);
 }
 
-static void renderPromptUnlocked()
+static void renderPromptUnlocked(bool jumpback)
 {
-    // Рендер промпта внизу терминала с сохранением/восстановлением позиции курсора (ANSI save/restore).
-    std::cout << "\x1b[\0337";
-    std::cout << "\x1b[999;1H\x1b[2K\r\x1b[92mserver> \x1b[0m" << inputBuffer << std::flush;
-    std::cout << "\x1b[\0338";
+    std::cout << "\x1b[s";
+    std::cout << "\x1b[999;1H";
+    std::cout << "\x1b[2K\r\x1b[92mserver> \x1b[0m" << inputBuffer << std::flush;
+    std::cout << "\x1b[u" << std::flush;
 }
 
 bool ServerCLI::isRunning() { return running.load(); }
@@ -52,14 +52,21 @@ void ServerCLI::renderPrompt()
     if (!running)
         return;
 
-    // Лочим общий Log::logMutex, чтобы вывод логов и prompt не "перемешивались" в stdout.
-    std::lock_guard<std::mutex> lk(Log::logMutex);
-    renderPromptUnlocked();
+    std::lock_guard<std::mutex> lk(cliMutex);
+    renderPromptUnlocked(true);
+}
+
+void ServerCLI::postLogRenderPrompt()
+{
+    if (!running)
+        return;
+
+    std::lock_guard<std::mutex> lk(cliMutex);
+    renderPromptUnlocked(true);
 }
 
 static void processCommand(const std::string& command)
 {
-    // Серверная CLI — локальная: команды не идут клиентам, а управляют процессом сервера.
     if (command.empty())
         return;
 
@@ -191,7 +198,7 @@ void ServerCLI::hookInputChar(char c)
     historyIndex = -1;
     historyDraft.clear();
     inputBuffer.push_back(c);
-    renderPromptUnlocked();
+    renderPromptUnlocked(true);
 }
 
 void ServerCLI::hookBackspace()
@@ -202,7 +209,7 @@ void ServerCLI::hookBackspace()
     if (!inputBuffer.empty())
     {
         utf8PopBack(inputBuffer);
-        renderPromptUnlocked();
+        renderPromptUnlocked(true);
     }
 }
 
@@ -223,7 +230,7 @@ void ServerCLI::hookArrowUp()
     }
 
     inputBuffer = commandHistory[static_cast<size_t>(historyIndex)];
-    renderPromptUnlocked();
+    renderPromptUnlocked(true);
 }
 
 void ServerCLI::hookArrowDown()
@@ -244,7 +251,7 @@ void ServerCLI::hookArrowDown()
         historyDraft.clear();
     }
 
-    renderPromptUnlocked();
+    renderPromptUnlocked(true);
 }
 
 void ServerCLI::hookEnter()
@@ -260,8 +267,10 @@ void ServerCLI::hookEnter()
     {
         if (commandHistory.empty() || commandHistory.back() != line)
             commandHistory.push_back(line);
+
         if (commandHistory.size() > 100)
             commandHistory.erase(commandHistory.begin());
+
         historyIndex = -1;
         historyDraft.clear();
 
@@ -271,7 +280,7 @@ void ServerCLI::hookEnter()
 
     {
         std::lock_guard<std::mutex> lk(cliMutex);
-        if (running) renderPromptUnlocked();
+        if (running) renderPromptUnlocked(true);
     }
 }
 
@@ -279,5 +288,5 @@ void ServerCLI::hookEscape()
 {
     std::lock_guard<std::mutex> lk(cliMutex);
     inputBuffer.clear();
-    renderPromptUnlocked();
+    renderPromptUnlocked(true);
 }

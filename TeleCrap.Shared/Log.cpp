@@ -9,6 +9,7 @@
 #include <sstream>
 
 std::mutex Log::logMutex;
+void(*Log::postWriteHook)() = nullptr;
 
 static const char* levelName(Log::Level lvl)
 {
@@ -69,15 +70,29 @@ void Log::Trace(std::string_view facility, std::string_view message)
 	write(Level::Trace, facility, message);
 }
 
-void Log::write(Level level, std::string_view facility, std::string_view message)
+void Log::SetPostWriteHook(void(*hook)())
 {
 	std::lock_guard<std::mutex> lk(logMutex);
+	postWriteHook = hook;
+}
+
+void Log::write(Level level, std::string_view facility, std::string_view message)
+{
+	void(*hook)() = nullptr;
+	{
+		std::lock_guard<std::mutex> lk(logMutex);
 	std::cout
 		<< "\x1b[0m"
+		<< "\r\x1b[2K"
 		<< "[" << nowHHMMSS() << "] "
 		<< levelColor(level) << levelName(level) << "\x1b[0m"
 		<< " [" << facility << "] "
 		<< message
 		<< std::endl;
+		hook = postWriteHook;
+	}
+
+	if (hook != nullptr)
+		hook();
 }
 

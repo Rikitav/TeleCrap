@@ -1,4 +1,7 @@
 #pragma once
+#include <array>
+#include <cstdint>
+
 #include "Models.h"
 #include "SocketHelper.h"
 
@@ -12,11 +15,21 @@ class Transport
 {
 	friend class Protocol;
 
+	struct SecureSession
+	{
+		bool Enabled = false;
+		std::array<std::uint8_t, 32> TxKey{};
+		std::array<std::uint8_t, 32> RxKey{};
+		std::uint64_t TxCounter = 0;
+		std::uint64_t RxCounter = 0;
+	};
+
 	Transport(const SOCKET transportSocket, const token_t accessToken);
 
 public:
 	const SOCKET TransportSocket;
 	const token_t AccessToken;
+	mutable SecureSession Secure;
 
 	Transport(const Transport&) = delete;
 	Transport& operator=(const Transport&) = delete;

@@ -150,7 +150,6 @@ namespace sol {
 			err.append(serr.data(), serr.size());
 		}
 #if SOL_IS_ON(SOL_PRINT_ERRORS)
-		std::cerr << "[sol2] An error occurred and has been passed to an error handler: ";
 		std::cerr << err;
 		std::cerr << std::endl;
 #endif

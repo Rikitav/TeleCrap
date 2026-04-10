@@ -12,6 +12,8 @@
 #include "telecrap/Models.h"
 #include "telecrap/Request.h"
 #include "telecrap/Responce.h"
+#include "telecrap/SecureChannel.h"
+#include "telecrap/Log.h"
 
 static void InitWsad()
 {
@@ -36,20 +38,21 @@ static SOCKET ScreamInVoidUntilConnected()
         try
         {
             // функция создаст транспортный сокет, при удачном подключении и рукопожатии с сервером
+            Log::Info("Main", "Попытка подключиться к серверу...");
             return SocketHelper::ConnectHandshake();
         }
-        catch (request_error&)
+        catch (connection_refused_error&)
+        {
+            // если не удалось подключиться, то пробуем снова, возможно сервер ещё не запустился
+            // немного откладываем следующий запрос, чтобы не спамить
+            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+        }
+        catch (...)
         {
             // "ошибка запроса" означает что соединение с сервером было установлено, но рукопажатие окончилось ошибкой
             // например неверный флаг при нестабильом соединении, или несовпадающая версия протокола
             // продолжать связываться с сервером в таком случае бесполезно, пожтому просто пробрасываем исключение далее
             throw;
-        }
-        catch (...)
-        {
-            // если не удалось подключиться, то пробуем снова, возможно сервер ещё не запустился
-            // немного откладываем следующий запрос, чтобы не спамить
-            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
         }
     }
 }
@@ -63,6 +66,7 @@ Transport::Transport(const SOCKET transportSocket, const token_t accessToken)
 Transport::~Transport()
 {
     // Transport владеет только socket-дескриптором: закрываем его при уничтожении.
+    Protocol::UnregisterSecureSession(this);
     SocketHelper::Close(const_cast<SOCKET*>(&TransportSocket));
     *const_cast<token_t*>(&AccessToken) = 0;
 }
@@ -86,7 +90,11 @@ Transport* Transport::Client()
 
     SOCKET transportSocket = ScreamInVoidUntilConnected();
     const connflag_t flag = rand();
-    Responce responce = Protocol::SendRequest(&transportSocket, Request::CreateHandshake(flag));
+    const std::uint64_t integrityTag = (static_cast<std::uint64_t>(rand()) << 32) ^ static_cast<std::uint64_t>(rand());
+    const SecureChannel::KeyPair keyPair = SecureChannel::GenerateX25519KeyPair();
+
+    Responce responce = Protocol::SendRequest(&transportSocket,
+        Request::CreateHandshakeSecure(flag, integrityTag, keyPair.PublicKey.data()));
 
     if (responce.Type == ResponceType::Error)
     {
@@ -100,7 +108,29 @@ Transport* Transport::Client()
         throw std::runtime_error("Failed to conect to server : server returned wrong flag");
     }
 
+    Transport* out = new Transport(transportSocket, responce.Handshake.Token);
+    if (responce.Handshake.SecureMode != 1 || responce.Handshake.IntegrityTag != integrityTag)
+    {
+        delete out;
+        throw std::runtime_error("Failed to connect to server : secure handshake integrity check failed");
+    }
+
+    const std::array<std::uint8_t, 32> sharedSecret =
+        SecureChannel::DeriveSharedSecret(keyPair.PrivateKey, responce.Handshake.ServerPublicKey);
+
+    SecureChannel::DeriveDirectionalKeys(
+        sharedSecret,
+        integrityTag,
+        false,
+        out->Secure.TxKey,
+        out->Secure.RxKey);
+
+    out->Secure.Enabled = true;
+    out->Secure.TxCounter = 0;
+    out->Secure.RxCounter = 0;
+    Protocol::RegisterSecureSession(out);
+
     // После handshake сервер выдает токен, который клиент прикладывает ко всем дальнейшим запросам.
     executed = true;
-    return new Transport(transportSocket, responce.Handshake.Token);
+    return out;
 }

@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include <iostream>
+#include <locale>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -19,8 +20,18 @@ static const HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 void Console::Init()
 {
 #ifdef _WIN32
-    // Устанавливаем кодовую страницу UTF-8 для поддержки русского
-    std::setlocale(LC_ALL, "");
+    // UTF-8 в консоли/CRT для корректного отображения кириллицы.
+    std::setlocale(LC_ALL, ".UTF-8");
+    try
+    {
+        std::locale::global(std::locale(".UTF-8"));
+        std::cout.imbue(std::locale());
+        std::cerr.imbue(std::locale());
+    }
+    catch (...)
+    {
+        // Locale not available; keep process defaults.
+    }
     SetConsoleOutputCP(65001);
     SetConsoleCP(65001);
 
@@ -41,7 +52,17 @@ void Console::Init()
     cursorInfo.bVisible = FALSE;
     SetConsoleCursorInfo(hConsole, &cursorInfo);
 #else
-    std::setlocale(LC_ALL, "");
+    std::setlocale(LC_ALL, "C.UTF-8");
+    try
+    {
+        std::locale::global(std::locale("C.UTF-8"));
+        std::cout.imbue(std::locale());
+        std::cerr.imbue(std::locale());
+    }
+    catch (...)
+    {
+        // Locale not available; keep process defaults.
+    }
     std::cout << "\033[?25l";
     std::cout.flush();
 #endif

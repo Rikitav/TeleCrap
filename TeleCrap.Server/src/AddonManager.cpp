@@ -10,6 +10,7 @@
 #include <sstream>
 #include <cstdio>
 #include <array>
+#include <mutex>
 
 #include <telecrap/Models.h>
 #include <telecrap/Request.h>
@@ -31,6 +32,7 @@
 #include "../include/Backend.h"
 #include "../include/ChatHistory.h"
 
+static std::mutex addonOpsMutex;
 static sol::state lua;
 static std::unordered_map<std::string, sol::protected_function> commands;
 static sol::table addonState;
@@ -370,6 +372,9 @@ sol::optional<Message> CommandContext::SendSystemMessageToChatId(chatid_t chatId
 
 void AddonManager::Init()
 {
+    // Сериализация с ExecuteCommand/ListRegisteredCommands: иначе пересоздание lua state
+    // во время вызова аддона — UB и падение процесса.
+    std::lock_guard<std::mutex> lock(addonOpsMutex);
     commands.clear();
     lua = sol::state{};
 
@@ -822,6 +827,7 @@ void AddonManager::Init()
 
 bool AddonManager::ExecuteCommand(const std::string& cmd, const std::string& args, Transport* transport, CommitMessageRequest& Request, UserInfo& requestor, ChatInfo& chat)
 {
+    std::lock_guard<std::mutex> lock(addonOpsMutex);
     const auto find = commands.find(cmd);
     if (find == commands.end())
         return false;
@@ -846,23 +852,23 @@ bool AddonManager::ExecuteCommand(const std::string& cmd, const std::string& arg
         {
             sol::error err = result;
             Log::Error("Addons", "Lua Script error : " + find->first + " : " + err.what());
-            throw;
+            return true;
         }
     }
     catch (const sol::error& e)
     {
         Log::Error("Addons", "LuaState error : " + find->first + " : " + e.what());
-        throw;
+        return true;
     }
     catch (const std::exception& e)
     {
         Log::Error("Addons", "Command handler error : " + find->first + " : " + e.what());
-        throw;
+        return true;
     }
     catch (...)
     {
         Log::Error("Addons", "Unknown error in command handler : " + find->first);
-        throw;
+        return true;
     }
 
     return true;
@@ -870,6 +876,7 @@ bool AddonManager::ExecuteCommand(const std::string& cmd, const std::string& arg
 
 std::vector<std::string> AddonManager::ListRegisteredCommands()
 {
+    std::lock_guard<std::mutex> lock(addonOpsMutex);
     std::vector<std::string> out;
     out.reserve(commands.size());
     for (const auto& kv : commands)

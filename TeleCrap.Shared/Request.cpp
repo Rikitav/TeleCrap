@@ -13,7 +13,24 @@ Request Request::CreateHandshake(const connflag_t& flag)
 	request.Type = RequestType::Handshake;
 	request.Handshake.Flag = flag;
 	request.Handshake.Version = TELECRAP_VERSION;
+	request.Handshake.SecureMode = 0;
+	request.Handshake.Reserved = 0;
+	request.Handshake.IntegrityTag = 0;
+	std::memset(request.Handshake.ClientPublicKey, 0, sizeof(request.Handshake.ClientPublicKey));
 
+	return request;
+}
+
+Request Request::CreateHandshakeSecure(const connflag_t& flag, std::uint64_t integrityTag, const std::uint8_t clientPublicKey[32])
+{
+	Request request{};
+	request.Type = RequestType::Handshake;
+	request.Handshake.Flag = flag;
+	request.Handshake.Version = TELECRAP_VERSION;
+	request.Handshake.SecureMode = 1;
+	request.Handshake.Reserved = 0;
+	request.Handshake.IntegrityTag = integrityTag;
+	std::memcpy(request.Handshake.ClientPublicKey, clientPublicKey, sizeof(request.Handshake.ClientPublicKey));
 	return request;
 }
 
