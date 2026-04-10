@@ -995,7 +995,7 @@ void Backend::processRequest(const Transport* transport, const Request& request)
             }
         }
     }
-    catch (disconnected_error)
+    catch (disconnected_error&)
     {
         return;
     }

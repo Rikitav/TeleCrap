@@ -30,7 +30,7 @@ static void listenClientRequestsLoop(Transport* transport)
             Request request = Protocol::GetRequest(*transport);
             Backend::processRequest(transport, request);
         }
-        catch (disconnected_error)
+        catch (disconnected_error&)
         {
             Log::Info("Conn", "Client disconnected");
             break;
@@ -64,7 +64,7 @@ static void listenHandshakeRequestsLoop(Transport* handshakeTransport)
             std::thread(listenClientRequestsLoop, newUserTransport).detach();
             Backend::addClientSocket(newUserTransport);
         }
-        catch (disconnected_error)
+        catch (disconnected_error&)
         {
             Log::Info("Conn", "Handshake client disconnected");
             continue;

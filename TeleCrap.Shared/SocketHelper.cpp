@@ -153,10 +153,18 @@ SOCKET SocketHelper::ConnectHandshake()
     sockerr_t err = connectSocket(transport, addr);
     if (err != ERR_OK)
     {
+#ifdef _WIN32
         int lastError = WSAGetLastError();
+#else
+        int lastError = errno;
+#endif
         Close(&transport);
-        
+
+#ifdef _WIN32
         if (lastError == WSAECONNREFUSED)
+#else
+        if (lastError == ECONNREFUSED)
+#endif
             throw connection_refused_error();
 
         throw request_error("Failed to connect Handshake listener socket.", err);

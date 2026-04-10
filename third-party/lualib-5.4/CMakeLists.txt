@@ -27,7 +27,7 @@ set(TELECRAP_LUA_SOURCES
     ltable.c
     ltablib.c
     ltm.c
-    lua.c
+    
     lundump.c
     lutf8lib.c
     lvm.c
