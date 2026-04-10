@@ -23,6 +23,14 @@
 #include "../include/TerminalUI.h"
 #include "../include/MemoryCache.h"
 
+#ifdef TELECRAP_TUI_CURSES
+#if defined(_WIN32)
+#include <curses.h>
+#else
+#include <ncurses.h>
+#endif
+#endif
+
 #define ignore catch (...) {}
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 #define min(a,b) (((a) < (b)) ? (a) : (b))
@@ -67,6 +75,9 @@ static int selectedChatListIndex = 0;
 
 static std::vector<std::string> cachedAddonCommands{};
 static bool areAddonCommandsLoaded = false;
+static std::vector<std::string> commandHistory;
+static int commandHistoryIndex = -1;
+static std::string commandHistoryDraft;
 
 // Все функции с суффиксом *Unlocked предполагают, что interfaceMutex уже захвачен.
 static void renderInterfaceUnlocked();
@@ -333,6 +344,46 @@ static bool isUserInActiveChat()
     return currentActiveChat.has_value();
 }
 
+static void navigateCommandHistory(int direction)
+{
+    if (currentUiMode != UiMode::Chat || commandHistory.empty())
+        return;
+
+    const int historySize = static_cast<int>(commandHistory.size());
+    if (direction < 0)
+    {
+        if (commandHistoryIndex < 0)
+        {
+            commandHistoryDraft = userInputBuffer;
+            commandHistoryIndex = historySize - 1;
+        }
+        else if (commandHistoryIndex > 0)
+        {
+            --commandHistoryIndex;
+        }
+    }
+    else
+    {
+        if (commandHistoryIndex < 0)
+            return;
+
+        if (commandHistoryIndex < historySize - 1)
+        {
+            ++commandHistoryIndex;
+        }
+        else
+        {
+            commandHistoryIndex = -1;
+            userInputBuffer = commandHistoryDraft;
+            renderInterfaceUnlocked();
+            return;
+        }
+    }
+
+    userInputBuffer = commandHistory[static_cast<size_t>(commandHistoryIndex)];
+    renderInterfaceUnlocked();
+}
+
 // Запрашивает историю сообщений и участников для указанного чата.
 static ChatMemory* fetchChatHistoryAndMembers(const Chat& targetChat)
 {
@@ -452,6 +503,12 @@ void TerminalUI::hookInputChar(char inputCharacter)
 {
     std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
 
+    if (commandHistoryIndex >= 0)
+    {
+        commandHistoryIndex = -1;
+        commandHistoryDraft.clear();
+    }
+
     userInputBuffer.push_back(inputCharacter);
     renderInterfaceUnlocked();
 }
@@ -459,6 +516,12 @@ void TerminalUI::hookInputChar(char inputCharacter)
 void TerminalUI::hookBackspace()
 {
     std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+
+    if (commandHistoryIndex >= 0)
+    {
+        commandHistoryIndex = -1;
+        commandHistoryDraft.clear();
+    }
 
     if (!userInputBuffer.empty())
     {
@@ -477,7 +540,8 @@ void TerminalUI::hookArrowUp()
     }
     else
     {
-        messageScrollOffset = (std::min)(messageScrollOffset + 1, 50);
+        navigateCommandHistory(-1);
+        return;
     }
 
     renderInterfaceUnlocked();
@@ -493,7 +557,8 @@ void TerminalUI::hookArrowDown()
     }
     else
     {
-        messageScrollOffset = (std::max)(messageScrollOffset - 1, 0);
+        navigateCommandHistory(1);
+        return;
     }
 
     renderInterfaceUnlocked();
@@ -539,6 +604,16 @@ void TerminalUI::hookEnter()
             return;
 
         extractedLine = std::move(userInputBuffer);
+        commandHistoryIndex = -1;
+        commandHistoryDraft.clear();
+    }
+
+    if (!extractedLine.empty())
+    {
+        if (commandHistory.empty() || commandHistory.back() != extractedLine)
+            commandHistory.push_back(extractedLine);
+        if (commandHistory.size() > 100)
+            commandHistory.erase(commandHistory.begin());
     }
 
     if (!extractedLine.empty() && extractedLine[0] == '/')
@@ -608,6 +683,238 @@ void appendMessageToChatUnlocked(const Message& incomingMessage)
 // Основная функция отрисовки пользовательского интерфейса в терминал
 void renderInterfaceUnlocked()
 {
+#ifdef TELECRAP_TUI_CURSES
+    int terminalWidth = 0;
+    int terminalHeight = 0;
+    TerminalUI::platformGetScreenSize(terminalWidth, terminalHeight);
+
+    calculatedChatHeight = terminalHeight - 5;
+
+    struct CommandHintRow
+    {
+        std::string CommandString;
+        std::string CommandDescription;
+        bool IsAddonCommand = false;
+    };
+
+    std::vector<CommandHintRow> generatedHintLines;
+    int reservedHintBoxLines = 0;
+
+    const bool isTypingCommand =
+        (currentUiMode == UiMode::Chat) &&
+        (!userInputBuffer.empty()) &&
+        (userInputBuffer[0] == '/');
+
+    if (isTypingCommand)
+    {
+        std::string_view commandView(userInputBuffer);
+        commandView.remove_prefix(1);
+        const size_t firstSpacePosition = commandView.find(' ');
+        const std::string_view typedCommandName = (firstSpacePosition == std::string_view::npos)
+            ? commandView : commandView.substr(0, firstSpacePosition);
+
+        std::unordered_set<std::string> processedCommands;
+        std::vector<CommandHintRow> potentialCandidates;
+        potentialCandidates.reserve(16);
+
+        for (const SlashCommandMetadata& localCommand : getLocalSlashCommandsList())
+        {
+            if (checkStringStartsWithCaseInsensitive(localCommand.Name, typedCommandName) && processedCommands.insert(localCommand.Name).second)
+            {
+                potentialCandidates.push_back(CommandHintRow
+                    {
+                        .CommandString = "/" + localCommand.Name,
+                        .CommandDescription = localCommand.Description,
+                        .IsAddonCommand = false,
+                    });
+            }
+        }
+
+        for (const std::string& addonCommand : cachedAddonCommands)
+        {
+            if (checkStringStartsWithCaseInsensitive(addonCommand, typedCommandName) && processedCommands.insert(addonCommand).second)
+            {
+                potentialCandidates.push_back(CommandHintRow
+                    {
+                        .CommandString = "/" + addonCommand,
+                        .CommandDescription = "addon",
+                        .IsAddonCommand = true,
+                    });
+            }
+        }
+
+        constexpr size_t maxAllowedHints = 8;
+        if (!potentialCandidates.empty())
+        {
+            std::sort(potentialCandidates.begin(), potentialCandidates.end(),
+                [](const CommandHintRow& itemA, const CommandHintRow& itemB) { return itemA.CommandString < itemB.CommandString; });
+            if (potentialCandidates.size() > maxAllowedHints)
+                potentialCandidates.resize(maxAllowedHints);
+            generatedHintLines = std::move(potentialCandidates);
+            reservedHintBoxLines = static_cast<int>(generatedHintLines.size()) + 2;
+        }
+    }
+
+    const int maximumMessageRows = (std::max)(0, terminalHeight - 6 - reservedHintBoxLines);
+    const int innerContainerWidth = (std::max)(4, terminalWidth - 4);
+
+    std::vector<Message> currentChatMessages;
+    if (isUserInActiveChat())
+        currentChatMessages = currentActiveChat.value()->Messages;
+
+    const int totalMessageCount = static_cast<int>(currentChatMessages.size());
+    const int startMessageIndex = (std::max)(0, totalMessageCount - maximumMessageRows - messageScrollOffset);
+
+    const std::string displayedUsername = isUserLoggedIn() ? std::string(currentLoggedInUser->Name.buffer) : "not_logged";
+    const std::string displayedChatName = isUserInActiveChat() ? std::string(currentActiveChat.value()->ChatInfo.Name.buffer) : "no_chat";
+    const std::string inputPromptLabel = displayedUsername + "@" + displayedChatName + "> ";
+
+    if (currentUiMode == UiMode::Chat && isUserLoggedIn() && currentActiveChat.value() == &idleChatPlaceholder && !cachedChatList.empty())
+        currentUiMode = UiMode::ChatList;
+
+    erase();
+
+    auto drawFramedRow = [&](int y, const std::string& text, int colorPair = 0, bool reverse = false)
+    {
+        if (y < 0 || y >= terminalHeight || terminalWidth < 2)
+            return;
+
+        std::string visible = text;
+        const int inner = (std::max)(0, terminalWidth - 2);
+        if (static_cast<int>(visible.size()) > inner)
+            visible = visible.substr(0, static_cast<size_t>(inner));
+
+        if (reverse)
+            attron(A_REVERSE);
+        if (colorPair > 0)
+            attron(COLOR_PAIR(colorPair));
+
+        mvaddch(y, 0, '|');
+        mvaddnstr(y, 1, visible.c_str(), inner);
+        if (static_cast<int>(visible.size()) < inner)
+            mvhline(y, 1 + static_cast<int>(visible.size()), ' ', inner - static_cast<int>(visible.size()));
+        mvaddch(y, terminalWidth - 1, '|');
+
+        if (colorPair > 0)
+            attroff(COLOR_PAIR(colorPair));
+        if (reverse)
+            attroff(A_REVERSE);
+    };
+
+    auto drawHorizontal = [&](int y, int colorPair = 0)
+    {
+        if (y < 0 || y >= terminalHeight || terminalWidth < 2)
+            return;
+        if (colorPair > 0)
+            attron(COLOR_PAIR(colorPair));
+        mvaddch(y, 0, '+');
+        if (terminalWidth > 2)
+            mvhline(y, 1, '-', terminalWidth - 2);
+        mvaddch(y, terminalWidth - 1, '+');
+        if (colorPair > 0)
+            attroff(COLOR_PAIR(colorPair));
+    };
+
+    drawHorizontal(0, 3);
+
+    std::string topHeaderRaw = isUserInActiveChat() ? ("Чат: " + std::string(currentActiveChat.value()->ChatInfo.Name.buffer)) : "TeleCrap";
+    topHeaderRaw = truncateUtf8StringByBytes(topHeaderRaw, static_cast<size_t>(innerContainerWidth));
+    drawFramedRow(1, " " + topHeaderRaw, 2);
+
+    if (currentUiMode == UiMode::ChatList)
+    {
+        const int listItemsCount = static_cast<int>(cachedChatList.size());
+        const int visibleListItems = maximumMessageRows;
+        const int topListIndex = max(0, (std::min)(selectedChatListIndex - visibleListItems / 2, listItemsCount - visibleListItems));
+
+        for (int rowOffset = 0; rowOffset < maximumMessageRows; ++rowOffset)
+        {
+            const int y = 2 + rowOffset;
+            const int currentItemIndex = topListIndex + rowOffset;
+            if (currentItemIndex >= listItemsCount)
+            {
+                drawFramedRow(y, " ");
+                continue;
+            }
+
+            const Chat& listChatModel = cachedChatList[currentItemIndex];
+            const bool isItemSelected = (currentItemIndex == selectedChatListIndex);
+            std::string chatLineText = std::string(listChatModel.Name.buffer);
+            chatLineText = truncateUtf8StringByBytes(chatLineText, static_cast<size_t>(innerContainerWidth - 2));
+            const std::string line = std::string(" ") + (isItemSelected ? "> " : "  ") + chatLineText;
+            drawFramedRow(y, line, isItemSelected ? 2 : 0, isItemSelected);
+        }
+    }
+    else
+    {
+        for (int rowOffset = 0; rowOffset < maximumMessageRows; ++rowOffset)
+        {
+            const int y = 2 + rowOffset;
+            const int currentMessageIndex = startMessageIndex + rowOffset;
+            if (currentMessageIndex >= totalMessageCount)
+            {
+                drawFramedRow(y, " ");
+                continue;
+            }
+
+            const Message& messageModel = currentChatMessages[static_cast<size_t>(currentMessageIndex)];
+            std::string timeString = "[" + TerminalUI::platformGetTimeString(messageModel.Timestamp) + "] ";
+            std::string authorPrefix = std::string(messageModel.From.Name.buffer) + ": ";
+            std::string messageBodyText = messageModel.Text.buffer;
+
+            const size_t combinedPrefixLength = timeString.size() + authorPrefix.size();
+            const size_t available = (innerContainerWidth > static_cast<int>(combinedPrefixLength))
+                ? static_cast<size_t>(innerContainerWidth) - combinedPrefixLength
+                : 0;
+            messageBodyText = truncateUtf8StringByBytes(messageBodyText, available);
+
+            drawFramedRow(y, " " + timeString + authorPrefix + messageBodyText, 1);
+        }
+    }
+
+    int y = 2 + maximumMessageRows;
+    if (reservedHintBoxLines > 0)
+    {
+        drawFramedRow(y++, " +" + std::string(static_cast<size_t>((std::max)(0, innerContainerWidth - 2)), '-') + "+", 4);
+        for (const CommandHintRow& hintRow : generatedHintLines)
+        {
+            std::string line = " " + hintRow.CommandString + " " + hintRow.CommandDescription;
+            line = truncateUtf8StringByBytes(line, static_cast<size_t>(terminalWidth - 1));
+            drawFramedRow(y++, line, 4);
+        }
+        drawFramedRow(y++, " +" + std::string(static_cast<size_t>((std::max)(0, innerContainerWidth - 2)), '-') + "+", 4);
+    }
+
+    drawHorizontal(y++, 3);
+
+    size_t activePromptLength = inputPromptLabel.size();
+    std::string safeDisplayInput = userInputBuffer;
+    if (activePromptLength + 3 > static_cast<size_t>(innerContainerWidth))
+    {
+        safeDisplayInput.clear();
+    }
+    else
+    {
+        const size_t maxInputAllowed = static_cast<size_t>(innerContainerWidth) - activePromptLength;
+        if (safeDisplayInput.size() > maxInputAllowed && maxInputAllowed > 3)
+            safeDisplayInput = "..." + safeDisplayInput.substr(safeDisplayInput.size() - (maxInputAllowed - 3));
+    }
+    drawFramedRow(y++, " " + inputPromptLabel + safeDisplayInput, 5);
+    drawHorizontal(y++, 3);
+
+    const uint32_t totalUnreadCountBadge = calculateTotalUnreadMessages();
+    std::string status = "ESC - выход | /help";
+    if (totalUnreadCountBadge > 0)
+        status += " | unread: " + std::to_string(totalUnreadCountBadge);
+    drawFramedRow((std::min)(y, terminalHeight - 1), " " + status, 4);
+
+    int cursorY = (std::min)(terminalHeight - 1, y - 2);
+    int cursorX = static_cast<int>((std::min)(static_cast<size_t>(terminalWidth - 1), 2 + activePromptLength + safeDisplayInput.size()));
+    move(cursorY, cursorX);
+    refresh();
+    return;
+#else
+
     size_t terminalWidth = 0;
     size_t terminalHeight = 0;
 
@@ -1012,6 +1319,7 @@ void renderInterfaceUnlocked()
 
     outputBuffer.append(cursorPositionCommand);
     TerminalUI::platformWriteStdout(outputBuffer);
+#endif
 }
 
 void TerminalUI::tryAuth(Transport* connectionSocket, std::string& inputUsername, std::string& inputPassword)

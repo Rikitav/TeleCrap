@@ -1,0 +1,108 @@
+name: Build And Release On Tag
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build ${{ matrix.os_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_name: windows-x64
+            runner: windows-latest
+            package_ext: zip
+          - os_name: linux-x64
+            runner: ubuntu-latest
+            package_ext: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libncursesw5-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Package release assets (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $stage = "release"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+
+          $serverExe = Get-ChildItem -Path build -Recurse -Filter "TeleCrap_server.exe" | Select-Object -First 1
+          $clientExe = Get-ChildItem -Path build -Recurse -Filter "telecrap_tui.exe" | Select-Object -First 1
+          if (-not $serverExe) { throw "TeleCrap_server.exe not found" }
+          if (-not $clientExe) { throw "telecrap_tui.exe not found" }
+
+          New-Item -ItemType Directory -Path "$stage/server" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$stage/client" -Force | Out-Null
+
+          Copy-Item $serverExe.FullName "$stage/server/TeleCrap_server.exe"
+          Copy-Item $clientExe.FullName "$stage/client/telecrap_tui.exe"
+
+          if (Test-Path "TeleCrap.Server/addons") {
+            Copy-Item "TeleCrap.Server/addons" "$stage/server/addons" -Recurse -Force
+          }
+          if (Test-Path "TeleCrap.Client/settings.cfg") {
+            Copy-Item "TeleCrap.Client/settings.cfg" "$stage/client/settings.cfg" -Force
+          }
+
+          $archive = "telecrap-$tag-windows-x64.zip"
+          Compress-Archive -Path "$stage/server", "$stage/client" -DestinationPath $archive -Force
+          "ASSET_PATH=$archive" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Package release assets (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          stage="release"
+          mkdir -p "$stage/server" "$stage/client"
+
+          server_bin="$(find build -type f -name TeleCrap_server | head -n 1)"
+          client_bin="$(find build -type f -name telecrap_tui | head -n 1)"
+          test -n "${server_bin}" || { echo "TeleCrap_server not found"; exit 1; }
+          test -n "${client_bin}" || { echo "telecrap_tui not found"; exit 1; }
+
+          cp "$server_bin" "$stage/server/TeleCrap_server"
+          cp "$client_bin" "$stage/client/telecrap_tui"
+
+          if [ -d "TeleCrap.Server/addons" ]; then
+            cp -r "TeleCrap.Server/addons" "$stage/server/addons"
+          fi
+          if [ -f "TeleCrap.Client/settings.cfg" ]; then
+            cp "TeleCrap.Client/settings.cfg" "$stage/client/settings.cfg"
+          fi
+
+          archive="telecrap-$tag-linux-x64.tar.gz"
+          tar -czf "$archive" -C "$stage" server client
+          echo "ASSET_PATH=$archive" >> "$GITHUB_ENV"
+
+      - name: Create/Update GitHub release and upload asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: ${{ env.ASSET_PATH }}

@@ -50,10 +50,10 @@ public:
     /// <summary>
     /// Обрабатывает стрелку вверх.
     /// </summary>
-    static void hookArrowUp() {}
+    static void hookArrowUp();
 
     /// <summary>
     /// Обрабатывает стрелку вниз.
     /// </summary>
-    static void hookArrowDown() {}
+    static void hookArrowDown();
 };

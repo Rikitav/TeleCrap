@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <atomic>
 #include <iostream>
+#include <chrono>
 #include <map>
 #include <optional>
 #include <vector>
@@ -128,6 +129,83 @@ void Backend::pushUpdateToChatMembersAll(const ChatInfo& chat, const Update& upd
 {
     for (const UserInfo& member : Database::findMembersByChat(chat))
         pushUpdateToUser(member.Id, update);
+}
+
+std::vector<OnlineClientInfo> Backend::listOnlineClients()
+{
+    std::vector<OnlineClientInfo> out;
+    std::lock_guard<std::recursive_mutex> credentialsLock(CredentialsMutex);
+    out.reserve(ClientSockets.size());
+
+    for (const Transport* transport : ClientSockets)
+    {
+        OnlineClientInfo info{};
+        info.AccessToken = transport->AccessToken;
+        info.PeerPort = SocketHelper::PeerPortOf(*transport);
+        info.PeerAddress = SocketHelper::PeerIdentificatorOf(*transport);
+
+        const auto it = ClientUsers.find(transport);
+        if (it != ClientUsers.end())
+        {
+            info.HasUser = true;
+            info.UserId = it->second;
+        }
+
+        out.push_back(std::move(info));
+    }
+
+    return out;
+}
+
+bool Backend::dropConnectionByPeerPort(u_short peerPort)
+{
+    std::lock_guard<std::recursive_mutex> credentialsLock(CredentialsMutex);
+    for (const Transport* transport : ClientSockets)
+    {
+        if (SocketHelper::PeerPortOf(*transport) != peerPort)
+            continue;
+
+        const SOCKET s = transport->TransportSocket;
+        if (s == 0 || s == INVALID_SOCKET)
+            return false;
+
+        shutdown(s, 0);
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return true;
+    }
+
+    return false;
+}
+
+size_t Backend::pushGlobalAlert(const std::string& text)
+{
+    Update u{};
+    u.Type = UpdateType::Message;
+    u.MessageSent.Id = 0;
+    u.MessageSent.DestChat.Id = SYSTEM_FROMID;
+    u.MessageSent.DestChat.Name = "server_alert";
+    u.MessageSent.DestChat.Type = ChatType::Group;
+    u.MessageSent.From.Id = SYSTEM_FROMID;
+    u.MessageSent.From.Name = "SERVER";
+    u.MessageSent.Timestamp = static_cast<timestamp_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    u.MessageSent.Text = text;
+
+    std::lock_guard<std::recursive_mutex> credentialsLock(CredentialsMutex);
+    size_t sent = 0;
+    for (const auto& [transport, userId] : ClientUsers)
+    {
+        (void)transport;
+        pushUpdateToUser(userId, u);
+        ++sent;
+    }
+
+    return sent;
 }
 
 static bool tryHandleSlashCommand(const Transport* transport, UserInfo& requestor, CommitMessageRequest& request, ChatInfo& chat)
@@ -928,9 +1006,19 @@ void Backend::processRequest(const Transport* transport, const Request& request)
                     return;
                 }
 
+                /*
                 bool commandExecuted = tryHandleSlashCommand(transport, requestor.value(), *const_cast<CommitMessageRequest*>(&request.CommitMessage), chat.value());
                 if (commandExecuted)
+                {
+                    Message message = Database::commitMessage(requestor.value(), request.CommitMessage);
+                    Protocol::SendResponce(*transport, Responce::CreateCommitMessage(message));
+                    Log::Trace("Messages", std::string("Committed message id=") + std::to_string(static_cast<long long>(message.Id)) +
+                        " chat=" + std::to_string(message.DestChat.Id) +
+                        " from=" + std::to_string(message.From.Id));
+
                     return;
+                }
+                */
 
                 Message message = Database::commitMessage(requestor.value(), request.CommitMessage);
                 Protocol::SendResponce(*transport, Responce::CreateCommitMessage(message));
@@ -952,6 +1040,7 @@ void Backend::processRequest(const Transport* transport, const Request& request)
 					UpdatesCache[member.Id].push_back(update);
                 }
 
+                bool commandExecuted = tryHandleSlashCommand(transport, requestor.value(), *const_cast<CommitMessageRequest*>(&request.CommitMessage), chat.value());
                 return;
             }
         }

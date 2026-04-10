@@ -15,8 +15,11 @@ else()
     add_compile_options(-Wall -Wextra)
 endif()
 
-add_subdirectory(TeleCrap.Libs.SQLite)
-add_subdirectory(TeleCrap.Libs.Sol)
+option(TELECRAP_TUI_USE_CURSES "Build client TUI with curses backend" ON)
+option(TELECRAP_USE_BUNDLED_PDCURSES "Build bundled PDCurses on Windows" ON)
+
+add_subdirectory(third-party/sqlite3)
+add_subdirectory(third-party/lualib-5.4)
 add_subdirectory(TeleCrap.Shared)
 add_subdirectory(TeleCrap.Server)
 add_subdirectory(TeleCrap.Client)

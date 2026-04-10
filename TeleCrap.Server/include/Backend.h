@@ -1,11 +1,23 @@
 #pragma once
 #include <optional>
+#include <string>
+#include <vector>
 
 #include <telecrap/Models.h>
 #include <telecrap/Request.h>
 #include <telecrap/Transport.h>
+#include <telecrap/Update.h>
 
 #include "ChatHistory.h"
+
+struct OnlineClientInfo
+{
+    token_t AccessToken = 0;
+    userid_t UserId = 0;
+    bool HasUser = false;
+    u_short PeerPort = 0;
+    std::string PeerAddress;
+};
 
 /// <summary>
 /// Центральный orchestrator серверной логики: управляет сессиями и маршрутизацией запросов.
@@ -77,4 +89,19 @@ public:
     /// Рассылает update всем участникоам чата, включая отправителя
     /// </summary>
     static void pushUpdateToChatMembersAll(const ChatInfo& chat, const Update& update);
+
+    /// <summary>
+    /// Возвращает снимок текущих сетевых подключений.
+    /// </summary>
+    static std::vector<OnlineClientInfo> listOnlineClients();
+
+    /// <summary>
+    /// Разрывает соединение по peer-port клиента.
+    /// </summary>
+    static bool dropConnectionByPeerPort(u_short peerPort);
+
+    /// <summary>
+    /// Рассылает системный alert всем авторизованным пользователям онлайн.
+    /// </summary>
+    static size_t pushGlobalAlert(const std::string& text);
 };

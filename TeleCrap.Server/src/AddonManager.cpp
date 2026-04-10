@@ -370,6 +370,9 @@ sol::optional<Message> CommandContext::SendSystemMessageToChatId(chatid_t chatId
 
 void AddonManager::Init()
 {
+    commands.clear();
+    lua = sol::state{};
+
     lua.open_libraries(
         sol::lib::base,
         sol::lib::package,
