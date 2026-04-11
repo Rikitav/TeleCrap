@@ -93,7 +93,7 @@ public:
     static void hookEnter();
 
     /// <summary>
-    /// Хук стрелки вверх.
+    /// Хук стрелки вверх (скролл истории чата / навигация в списке чатов).
     /// </summary>
     static void hookArrowUp();
 
@@ -101,6 +101,16 @@ public:
     /// Хук стрелки вниз.
     /// </summary>
     static void hookArrowDown();
+
+    /// <summary>
+    /// Shift+стрелка вверх — история введённых команд (только режим чата).
+    /// </summary>
+    static void hookArrowUpShift();
+
+    /// <summary>
+    /// Shift+стрелка вниз — история команд.
+    /// </summary>
+    static void hookArrowDownShift();
 
     /// <summary>
     /// Хук Escape.

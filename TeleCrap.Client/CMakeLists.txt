@@ -2,7 +2,7 @@ add_executable(telecrap_client
     src/MemoryCache.cpp
     src/TeleCrap.Client.cpp
     src/TerminalUI.cpp
-)
+    "include/ini.h")
 
 if(TELECRAP_TUI_USE_CURSES)
     target_sources(telecrap_client PRIVATE src/TerminalUI.Curses.cpp)
@@ -67,7 +67,7 @@ if(TELECRAP_TUI_USE_CURSES)
             add_library(telecrap_pdcurses STATIC
                 ${TELECRAP_PDCURSES_CORE}
                 ${TELECRAP_PDCURSES_WINCON}
-            )
+             "include/ini.h")
 
             target_include_directories(telecrap_pdcurses
                 PUBLIC

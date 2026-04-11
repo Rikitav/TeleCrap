@@ -990,7 +990,7 @@ void Backend::processRequest(const Transport* transport, const Request& request)
 					UpdatesCache[member.Id].push_back(update);
                 }
 
-                bool commandExecuted = tryHandleSlashCommand(transport, requestor.value(), *const_cast<CommitMessageRequest*>(&request.CommitMessage), chat.value());
+                tryHandleSlashCommand(transport, requestor.value(), *const_cast<CommitMessageRequest*>(&request.CommitMessage), chat.value());
                 return;
             }
         }

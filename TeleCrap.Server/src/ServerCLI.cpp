@@ -36,7 +36,7 @@ static void utf8PopBack(std::string& s)
         s.erase(i - 1);
 }
 
-static void renderPromptUnlocked(bool jumpback)
+static void renderPromptUnlocked()
 {
     std::cout << "\x1b[s";
     std::cout << "\x1b[999;1H";
@@ -53,7 +53,7 @@ void ServerCLI::renderPrompt()
         return;
 
     std::lock_guard<std::mutex> lk(cliMutex);
-    renderPromptUnlocked(true);
+    renderPromptUnlocked();
 }
 
 void ServerCLI::postLogRenderPrompt()
@@ -62,7 +62,7 @@ void ServerCLI::postLogRenderPrompt()
         return;
 
     std::lock_guard<std::mutex> lk(cliMutex);
-    renderPromptUnlocked(true);
+    renderPromptUnlocked();
 }
 
 static void processCommand(const std::string& command)
@@ -198,7 +198,7 @@ void ServerCLI::hookInputChar(char c)
     historyIndex = -1;
     historyDraft.clear();
     inputBuffer.push_back(c);
-    renderPromptUnlocked(true);
+    renderPromptUnlocked();
 }
 
 void ServerCLI::hookBackspace()
@@ -209,7 +209,7 @@ void ServerCLI::hookBackspace()
     if (!inputBuffer.empty())
     {
         utf8PopBack(inputBuffer);
-        renderPromptUnlocked(true);
+        renderPromptUnlocked();
     }
 }
 
@@ -230,7 +230,7 @@ void ServerCLI::hookArrowUp()
     }
 
     inputBuffer = commandHistory[static_cast<size_t>(historyIndex)];
-    renderPromptUnlocked(true);
+    renderPromptUnlocked();
 }
 
 void ServerCLI::hookArrowDown()
@@ -251,7 +251,7 @@ void ServerCLI::hookArrowDown()
         historyDraft.clear();
     }
 
-    renderPromptUnlocked(true);
+    renderPromptUnlocked();
 }
 
 void ServerCLI::hookEnter()
@@ -280,7 +280,7 @@ void ServerCLI::hookEnter()
 
     {
         std::lock_guard<std::mutex> lk(cliMutex);
-        if (running) renderPromptUnlocked(true);
+        if (running) renderPromptUnlocked();
     }
 }
 
@@ -288,5 +288,5 @@ void ServerCLI::hookEscape()
 {
     std::lock_guard<std::mutex> lk(cliMutex);
     inputBuffer.clear();
-    renderPromptUnlocked(true);
+    renderPromptUnlocked();
 }

@@ -33,9 +33,24 @@ static void handleKeyEventWin(const KEY_EVENT_RECORD& ke)
 {
     const UINT vk = ke.wVirtualKeyCode;
     const UINT ctrl = ke.dwControlKeyState;
+    const bool shiftDown = (ctrl & SHIFT_PRESSED) != 0;
 
-    if (vk == VK_UP)          { TerminalUI::hookArrowUp(); return; }
-    if (vk == VK_DOWN)        { TerminalUI::hookArrowDown(); return; }
+    if (vk == VK_UP)
+    {
+        if (shiftDown)
+            TerminalUI::hookArrowUpShift();
+        else
+            TerminalUI::hookArrowUp();
+        return;
+    }
+    if (vk == VK_DOWN)
+    {
+        if (shiftDown)
+            TerminalUI::hookArrowDownShift();
+        else
+            TerminalUI::hookArrowDown();
+        return;
+    }
     if (vk == VK_ESCAPE)      { TerminalUI::hookEscape(); return; }
     if (vk == VK_RETURN)      { TerminalUI::hookEnter(); return; }
     if (vk == VK_BACK)        { TerminalUI::hookBackspace(); return; }

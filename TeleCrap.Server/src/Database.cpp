@@ -26,6 +26,7 @@
 #include "../include/ChatHistory.h"
 
 static std::recursive_mutex DbMutex;
+static std::unique_ptr<SQLite::Database> DbSql;
 
 // Соль привязана к машине: хеши паролей в telecrap.db не переносятся на другой хост без сброса паролей.
 static std::string readMachineBoundSalt()
@@ -172,14 +173,14 @@ static void execTableCreation(SQLite::Database* DbSql)
     )");
 }
 
-std::unique_ptr<SQLite::Database> Database::DbSql;
+std::string Database::DbConnection;
 
 void Database::Init()
 {
     try
     {
         // Файл БД создается рядом с бинарником.
-        DbSql = std::make_unique<SQLite::Database>("telecrap.db", SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
+        DbSql = std::make_unique<SQLite::Database>(DbConnection, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
         DbSql->exec("PRAGMA foreign_keys = ON;");
         execTableCreation(DbSql.get());
 
@@ -495,7 +496,7 @@ DirectChatInfo Database::createDirectChat(const UserInfo& user1, const UserInfo&
 {
     std::lock_guard<std::recursive_mutex> dbLock(DbMutex);
 
-    UserInfo owner = UserInfo{ .Id = SYSTEM_FROMID };
+    UserInfo owner{ .Id = SYSTEM_FROMID, .Name = {}, .PasswordHash = 0 };
     ChatInfo directChat = createGroupChat(owner, std::string_view("direct_chat_" + std::string(user1.Name) + "_and_" + std::string(user2.Name)));
 
     try
@@ -519,13 +520,12 @@ DirectChatInfo Database::createDirectChat(const UserInfo& user1, const UserInfo&
         queryDirect.exec();
 
         transaction.commit();
-        DirectChatInfo direct = DirectChatInfo
-        {
-            .User1Id = user1.Id,
-            .User2Id = user2.Id,
-        };
-
+        DirectChatInfo direct{};
         direct.Id = directChat.Id;
+        direct.Name = directChat.Name;
+        direct.OwnerId = directChat.OwnerId;
+        direct.User1Id = user1.Id;
+        direct.User2Id = user2.Id;
         return direct;
     }
     catch (std::exception& exc)

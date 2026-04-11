@@ -48,3 +48,9 @@ add_custom_command(TARGET telecrap_server POST_BUILD
         ${CMAKE_CURRENT_SOURCE_DIR}/addons
         $<TARGET_FILE_DIR:telecrap_server>/addons
 )
+
+add_custom_command(TARGET telecrap_server POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/settings.cfg
+        $<TARGET_FILE_DIR:telecrap_server>/settings.cfg
+)

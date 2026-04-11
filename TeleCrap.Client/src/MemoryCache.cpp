@@ -27,7 +27,12 @@ ChatMemory* MemoryCache::createChatMemory(const Chat& chat)
 {
 	// Создание происходит при первом появлении чата в списке или при открытии чата.
 	std::lock_guard<std::recursive_mutex> lk(chatsMutex);
-	ChatMemory* chatMemory = new ChatMemory { .ChatInfo = chat };
+	ChatMemory* chatMemory = new ChatMemory{
+	    .ChatInfo = chat,
+	    .Members = {},
+	    .Messages = {},
+	    .MessagesLoaded = false,
+	};
 	chatsCache[chat.Id] = chatMemory;
 	return chatMemory;
 }

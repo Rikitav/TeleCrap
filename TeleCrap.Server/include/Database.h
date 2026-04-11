@@ -15,9 +15,9 @@
 /// </summary>
 class Database
 {
-    static std::unique_ptr<SQLite::Database> DbSql;
-
 public:
+    static std::string DbConnection;
+
     /// <summary>
     /// Открывает БД, применяет PRAGMA и создает таблицы при первом запуске.
     /// </summary>
@@ -27,6 +27,7 @@ public:
     /// Возвращает пользователя по идентификатору.
     /// </summary>
     static std::optional<UserInfo> findUserById(const std::optional<userid_t> userId);
+    
     /// <summary>
     /// Возвращает пользователя по имени.
     /// </summary>
@@ -36,14 +37,17 @@ public:
     /// Возвращает чат по идентификатору.
     /// </summary>
     static std::optional<ChatInfo> findChatById(const std::optional<chatid_t> chatId);
+    
     /// <summary>
     /// Возвращает чат по имени.
     /// </summary>
     static std::optional<ChatInfo> findChatByName(const fixed_string<CHATNAME_MAXLENGTH>& name);
+    
     /// <summary>
     /// Ищет direct-чат между двумя пользователями.
     /// </summary>
     static std::optional<DirectChatInfo> findDirectChat(const userid_t user1Id, const userid_t user2Id);
+    
     /// <summary>
     /// Возвращает собеседника direct-чата относительно requestorId.
     /// </summary>
@@ -53,10 +57,12 @@ public:
     /// Возвращает список чатов, в которых состоит пользователь.
     /// </summary>
     static std::vector<ChatInfo> findChatsByUser(const UserInfo& user);
+    
     /// <summary>
     /// Возвращает участников указанного чата.
     /// </summary>
     static std::vector<UserInfo> findMembersByChat(const ChatInfo& chat);
+    
     /// <summary>
     /// Возвращает историю сообщений чата.
     /// </summary>
@@ -66,10 +72,12 @@ public:
     /// Создает нового пользователя.
     /// </summary>
 	static UserInfo createUser(const fixed_string<CHATNAME_MAXLENGTH>& username, const fixed_string<PASSWORD_MAXLENGTH>& password);
+    
     /// <summary>
     /// Создает групповой чат с указанным владельцем.
     /// </summary>
     static ChatInfo createGroupChat(UserInfo& ownerInfo, const fixed_string<CHATNAME_MAXLENGTH>& chatname);
+    
     /// <summary>
     /// Создает direct-чат между двумя пользователями.
     /// </summary>
@@ -79,10 +87,12 @@ public:
     /// Добавляет пользователя в чат.
     /// </summary>
     static void joinChatMember(const ChatInfo& chatInfo, const UserInfo& userInfo);
+    
     /// <summary>
     /// Сохраняет пользовательское сообщение в БД.
     /// </summary>
     static Message commitMessage(UserInfo& senderInfo, const CommitMessageRequest& message);
+    
     /// <summary>
     /// Сохраняет системное сообщение в БД.
     /// </summary>
@@ -92,18 +102,22 @@ public:
     /// Проверяет, забанен ли пользователь в чате.
     /// </summary>
     static bool isUserBannedFromChat(chatid_t chatId, userid_t userId);
+    
     /// <summary>
     /// Банит пользователя в чате.
     /// </summary>
     static void banUserInChat(const ChatInfo& chat, const UserInfo& target);
+    
     /// <summary>
     /// Снимает бан пользователя в чате.
     /// </summary>
     static void unbanUserInChat(chatid_t chatId, userid_t userId);
+    
     /// <summary>
     /// Удаляет участника из чата.
     /// </summary>
     static void removeMemberFromChat(chatid_t chatId, userid_t userId);
+    
     /// <summary>
     /// Переименовывает чат.
     /// </summary>

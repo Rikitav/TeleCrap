@@ -49,7 +49,7 @@ static sockaddr_in createAddress(const u_long ipAddress, const u_short port)
     // адрес, на котром  будем "слушать", тут сразу будет и IP, и порт
     sockaddr_in addr{};
     addr.sin_family = AF_INET;          // тип нашего адреса в виде IP+порт
-    addr.sin_port = port;               // порт
+    addr.sin_port = htons(port);        // порт
     addr.sin_addr.s_addr = ipAddress;   // адрес
 
     return addr;

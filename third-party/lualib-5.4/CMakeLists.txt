@@ -27,7 +27,6 @@ set(TELECRAP_LUA_SOURCES
     ltable.c
     ltablib.c
     ltm.c
-    
     lundump.c
     lutf8lib.c
     lvm.c
@@ -42,6 +41,11 @@ target_include_directories(telecrap_libs_sol
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# Use mkstemp for os.tmpname on POSIX (avoids linker warning about tmpnam from loslib.c).
+if(UNIX)
+    target_compile_definitions(telecrap_libs_sol PRIVATE LUA_USE_POSIX)
+endif()
 
 # Lua is built as C++; consumers that use sol2 must see this when compiling against linked Lua.
 target_compile_definitions(telecrap_libs_sol

@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <ctime>
 #include <atomic>
+#include <string>
 
 #include "../include/TerminalUI.h"
 
@@ -70,28 +71,87 @@ static void handleByteLinux(unsigned char b)
 {
     if (b == 27) // ESC
     {
-        unsigned char seq[2]{};
-        const ssize_t n1 = ::read(STDIN_FILENO, &seq[0], 1);
-        if (n1 <= 0) { TerminalUI::hookEscape(); return; }
-
-        if (seq[0] == '[')
+        unsigned char c0{};
+        const ssize_t n1 = ::read(STDIN_FILENO, &c0, 1);
+        if (n1 <= 0)
         {
-            const ssize_t n2 = ::read(STDIN_FILENO, &seq[1], 1);
-            if (n2 <= 0) return;
-            switch (seq[1])
-            {
-                case 'A': TerminalUI::hookArrowUp(); break;
-                case 'B': TerminalUI::hookArrowDown(); break;
-            }
+            TerminalUI::hookEscape();
             return;
         }
+
+        // CSI: ESC [ ... final byte 0x40–0x7E (стрелки, Shift+стрелки как ESC [ 1 ; 2 A)
+        if (c0 == '[')
+        {
+            std::string csi;
+            for (;;)
+            {
+                unsigned char cx{};
+                const ssize_t n = ::read(STDIN_FILENO, &cx, 1);
+                if (n <= 0)
+                    return;
+
+                csi.push_back(static_cast<char>(cx));
+                if (cx >= 0x40 && cx <= 0x7E)
+                    break;
+            }
+
+            const char fin = csi.empty() ? '\0' : csi.back();
+            const bool shiftMod = (csi.find(";2") != std::string::npos);
+            if (fin == 'A')
+            {
+                if (shiftMod)
+                    TerminalUI::hookArrowUpShift();
+                else
+                    TerminalUI::hookArrowUp();
+                return;
+            }
+
+            if (fin == 'B')
+            {
+                if (shiftMod)
+                    TerminalUI::hookArrowDownShift();
+                else
+                    TerminalUI::hookArrowDown();
+                return;
+            }
+
+            return;
+        }
+
+        // SS3: ESC O A / ESC O B (application cursor keys)
+        if (c0 == 'O')
+        {
+            unsigned char fin{};
+            if (::read(STDIN_FILENO, &fin, 1) <= 0)
+                return;
+
+            if (fin == 'A')
+                TerminalUI::hookArrowUp();
+            else if (fin == 'B')
+                TerminalUI::hookArrowDown();
+            return;
+        }
+
         TerminalUI::hookEscape();
         return;
     }
 
-    if (b == 127 || b == 8) { TerminalUI::hookBackspace(); return; }
-    if (b == '\r' || b == '\n') { TerminalUI::hookEnter(); return; }
-    if (b >= 32) { TerminalUI::hookInputChar(static_cast<char>(b)); }
+    if (b == 127 || b == 8)
+    {
+        TerminalUI::hookBackspace();
+        return;
+    }
+
+    if (b == '\r' || b == '\n')
+    {
+        TerminalUI::hookEnter();
+        return;
+    }
+
+    if (b >= 32)
+    {
+        TerminalUI::hookInputChar(static_cast<char>(b));
+    }
 }
 
 void TerminalUI::run(Transport* transportSocket)
@@ -117,7 +177,6 @@ void TerminalUI::run(Transport* transportSocket)
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
         if (poll(&pfd, 1, 50) <= 0)
-            continue;
             continue;
 
         unsigned char buf[64]{};

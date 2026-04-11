@@ -40,6 +40,18 @@ static std::string CONFIG_FILE = "settings.cfg";
 static ClientSettings Settings{};
 static Transport* transport = nullptr;
 
+static int safe_stoi(const std::string& str, int defaultValue, size_t* idx = nullptr, int base = 10)
+{
+    try
+    {
+        return std::stoi(str);
+    }
+    catch (...)
+    {
+        return defaultValue;
+    }
+}
+
 static bool runningUnderCmd()
 {
 #ifdef _WIN32
@@ -200,15 +212,7 @@ static void configLoad()
     if (file.read(ini))
     {
         Settings.ServerIP = ini["Network"]["ServerIP"];
-
-        try
-        {
-            Settings.ServerPort = static_cast<uint16_t>(std::stoi(ini["Network"]["ServerPort"]));
-        }
-        catch (...)
-        {
-            Settings.ServerPort = 7777;
-        }
+        Settings.ServerPort = static_cast<uint16_t>(safe_stoi(ini["Network"]["ServerPort"], 7777));
 
         Settings.Username = ini["User"]["Username"];
         Settings.Password = ini["User"]["Password"];
@@ -229,6 +233,49 @@ static void configLoad()
     }
 }
 
+static void parseArgs(int argc, char** argv)
+{
+    bool anyCfgChanges = false;
+    for (int i = 1; i < argc; i++)
+    {
+        std::string arg = argv[i];
+        if (arg == "-p")
+        {
+            if (argc == i - 1)
+            {
+                Log::Error("Main", "Specify server port to connect");
+                abort();
+                return;
+            }
+
+            Settings.ServerPort = std::stol(argv[i + 1]);
+            anyCfgChanges = true;
+
+            argc += 1;
+            continue;
+        }
+
+        if (arg == "-a")
+        {
+            if (argc == i - 1)
+            {
+                Log::Error("Main", "Specify server address to connect");
+                abort();
+                return;
+            }
+
+            Settings.ServerIP = argv[i + 1];
+            anyCfgChanges = true;
+
+            argc += 1;
+            continue;
+        }
+    }
+
+    if (anyCfgChanges)
+        configSave();
+}
+
 int main(int argc, char** argv)
 {
     try
@@ -237,14 +284,12 @@ int main(int argc, char** argv)
         signal(SIGABRT, sigintHandler);
         srand(static_cast<unsigned int>(time(0)));
 
-#ifdef _WIN32
-        SetConsoleTitleA("TeleCrap Messenger v0.5");
-#else
-        std::cout << "\033]0;" << "TeleCrap Messenger v0.5" << "\007";
-#endif
+        if (argc > 1)
+            parseArgs(argc, argv);
 
-		Console::Init();
         configLoad();
+		Console::Init();
+        std::cout << "\033]0;" << "TeleCrap Messenger v0.6" << "\007";
 
         Log::Info("Main", "Инициализация сервисов...");
         Transport::Init();

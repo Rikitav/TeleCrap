@@ -23,12 +23,10 @@
 #include "../include/TerminalUI.h"
 #include "../include/MemoryCache.h"
 
-#ifdef TELECRAP_TUI_CURSES
 #if defined(_WIN32)
 #include <curses.h>
 #else
 #include <ncurses.h>
-#endif
 #endif
 
 #define ignore catch (...) {}
@@ -45,11 +43,10 @@ enum class UiMode
 // Id = SYSTEM_FROMID используется как гарантированно невалидный идентификатор пользовательского чата.
 static ChatMemory idleChatPlaceholder
 {
-    .ChatInfo =
-    {
-        .Id = SYSTEM_FROMID,
-        .Name = std::string_view("no_chat")
-    }
+    .ChatInfo = { .Id = SYSTEM_FROMID, .Name = std::string_view("no_chat") },
+    .Members = {},
+    .Messages = {},
+    .MessagesLoaded = false,
 };
 
 static std::recursive_mutex interfaceMutex;
@@ -61,6 +58,10 @@ static std::optional<User> currentLoggedInUser = std::nullopt;
 static std::atomic<bool> isApplicationRunning{ false };
 static std::string userInputBuffer;
 static int messageScrollOffset = 0;
+// Последняя высота области сообщений из рендера (для скролла без дублирования расчёта подсказок).
+static int g_lastMaximumMessageRows = 12;
+// Последний чат, в котором увеличили счётчик непрочитанных (для подписи в бейдже).
+static chatid_t lastUnreadBadgeChatId = 0;
 static int calculatedChatHeight = 0;
 
 // Локальная модель "непрочитанных" сообщений.
@@ -86,6 +87,23 @@ static void toggleChatListMode(bool isEnabled);
 static bool loadAndSelectChat(const Chat& targetChat);
 static bool isUserLoggedIn();
 static bool isUserInActiveChat();
+
+// Обрезает строку по количеству байт, не разрывая UTF-8 символы посередине.
+static std::string truncateUtf8StringByBytes(std::string_view originalString, size_t maxAllowedBytes)
+{
+    if (originalString.size() <= maxAllowedBytes)
+        return std::string(originalString);
+
+    if (maxAllowedBytes <= 3)
+        return "...";
+
+    // Смещаем позицию обрезки влево, чтобы не разрезать UTF-8 символ.
+    size_t cutPosition = maxAllowedBytes - 3;
+    while (cutPosition > 0 && (static_cast<unsigned char>(originalString[cutPosition]) & 0xC0) == 0x80)
+        --cutPosition;
+
+    return std::string(originalString.substr(0, cutPosition)) + "...";
+}
 
 static const char* getAnsiNotificationStyle()
 {
@@ -113,23 +131,6 @@ static const char* getAnsiColorForeground(Color targetColor)
         case Color::DARK_GRAY:      return "\x1b[90m";
         default:                    return "\x1b[37m";
     }
-}
-
-// Обрезает строку по количеству байт, не разрывая UTF-8 символы посередине.
-static std::string truncateUtf8StringByBytes(std::string_view originalString, size_t maxAllowedBytes)
-{
-    if (originalString.size() <= maxAllowedBytes)
-        return std::string(originalString);
-
-    if (maxAllowedBytes <= 3)
-        return "...";
-
-    // Смещаем позицию обрезки влево, чтобы не разрезать UTF-8 символ.
-    size_t cutPosition = maxAllowedBytes - 3;
-    while (cutPosition > 0 && (static_cast<unsigned char>(originalString[cutPosition]) & 0xC0) == 0x80)
-        --cutPosition;
-
-    return std::string(originalString.substr(0, cutPosition)) + "...";
 }
 
 // Подсчитывает количество символов (кодовых точек) в UTF-8 строке.
@@ -321,6 +322,8 @@ static void clearUnreadMessagesForChatId(chatid_t targetChatId)
 {
     unreadMessageCountByChatId.erase(targetChatId);
     unreadChatNamesByChatId.erase(targetChatId);
+    if (lastUnreadBadgeChatId == targetChatId)
+        lastUnreadBadgeChatId = unreadMessageCountByChatId.empty() ? 0 : unreadMessageCountByChatId.begin()->first;
 }
 
 // Переключает режим отображения интерфейса между чатом и списком чатов.
@@ -342,6 +345,18 @@ static bool isUserLoggedIn()
 static bool isUserInActiveChat()
 {
     return currentActiveChat.has_value();
+}
+
+static void adjustChatMessageScroll(int deltaOlder)
+{
+    // deltaOlder > 0 — к более старым сообщениям (стрелка вверх).
+    if (currentUiMode != UiMode::Chat || !isUserInActiveChat())
+        return;
+
+    const int total = static_cast<int>(currentActiveChat.value()->Messages.size());
+    const int maxRows = (std::max)(1, g_lastMaximumMessageRows);
+    const int maxOffset = (std::max)(0, total - maxRows);
+    messageScrollOffset = (std::min)(maxOffset, (std::max)(0, messageScrollOffset + deltaOlder));
 }
 
 static void navigateCommandHistory(int direction)
@@ -460,6 +475,7 @@ static bool loadAndSelectChat(const Chat& targetChat)
             std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
             currentActiveChat = targetChatMemory;
             clearUnreadMessagesForChatId(targetChat.Id);
+            messageScrollOffset = 0;
         }
 
         TerminalUI::drawUI();
@@ -540,8 +556,7 @@ void TerminalUI::hookArrowUp()
     }
     else
     {
-        navigateCommandHistory(-1);
-        return;
+        adjustChatMessageScroll(1);
     }
 
     renderInterfaceUnlocked();
@@ -557,10 +572,23 @@ void TerminalUI::hookArrowDown()
     }
     else
     {
-        navigateCommandHistory(1);
-        return;
+        adjustChatMessageScroll(-1);
     }
 
+    renderInterfaceUnlocked();
+}
+
+void TerminalUI::hookArrowUpShift()
+{
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+    navigateCommandHistory(-1);
+    renderInterfaceUnlocked();
+}
+
+void TerminalUI::hookArrowDownShift()
+{
+    std::lock_guard<std::recursive_mutex> threadLock(interfaceMutex);
+    navigateCommandHistory(1);
     renderInterfaceUnlocked();
 }
 
@@ -667,6 +695,7 @@ void appendMessageToChatUnlocked(const Message& incomingMessage)
     if (incomingMessage.From.Id != SYSTEM_FROMID && !isMessageFromSelf && !isCurrentlyViewingChat)
     {
         unreadMessageCountByChatId[incomingMessage.DestChat.Id]++;
+        lastUnreadBadgeChatId = incomingMessage.DestChat.Id;
         const auto mem = MemoryCache::getChatMemory(incomingMessage.DestChat.Id);
         std::string label = mem.has_value()
             ? std::string(mem.value()->ChatInfo.Name.c_str())
@@ -690,7 +719,6 @@ void appendMessageToChatUnlocked(const Message& incomingMessage)
 // Основная функция отрисовки пользовательского интерфейса в терминал
 void renderInterfaceUnlocked()
 {
-#ifdef TELECRAP_TUI_CURSES
     int terminalWidth = 0;
     int terminalHeight = 0;
     TerminalUI::platformGetScreenSize(terminalWidth, terminalHeight);
@@ -889,6 +917,7 @@ void renderInterfaceUnlocked()
             line = truncateUtf8StringByBytes(line, static_cast<size_t>(terminalWidth - 1));
             drawFramedRow(y++, line, 4);
         }
+
         drawFramedRow(y++, " +" + std::string(static_cast<size_t>((std::max)(0, innerContainerWidth - 2)), '-') + "+", 4);
     }
 
@@ -906,6 +935,7 @@ void renderInterfaceUnlocked()
         if (safeDisplayInput.size() > maxInputAllowed && maxInputAllowed > 3)
             safeDisplayInput = "..." + safeDisplayInput.substr(safeDisplayInput.size() - (maxInputAllowed - 3));
     }
+
     drawFramedRow(y++, " " + inputPromptLabel + safeDisplayInput, 5);
     drawHorizontal(y++, 3);
 
@@ -913,6 +943,7 @@ void renderInterfaceUnlocked()
     std::string status = "ESC - выход | /help";
     if (totalUnreadCountBadge > 0)
         status += " | unread: " + std::to_string(totalUnreadCountBadge);
+
     drawFramedRow((std::min)(y, terminalHeight - 1), " " + status, 4);
 
     int cursorY = (std::min)(terminalHeight - 1, y - 2);
@@ -920,413 +951,6 @@ void renderInterfaceUnlocked()
     move(cursorY, cursorX);
     refresh();
     return;
-#else
-
-    size_t terminalWidth = 0;
-    size_t terminalHeight = 0;
-
-    TerminalUI::platformGetScreenSize(
-        *reinterpret_cast<int*>(&terminalWidth),
-        *reinterpret_cast<int*>(&terminalHeight));
-
-    // Рассчитываем доступную высоту для окна чата
-    calculatedChatHeight = static_cast<int>(terminalHeight - 5);
-
-    // --- Окно с подсказками для слэш-команд ---
-    struct CommandHintRow
-    {
-        std::string CommandString;
-        std::string CommandDescription;
-        bool IsAddonCommand = false;
-    };
-
-    std::vector<CommandHintRow> generatedHintLines;
-    int reservedHintBoxLines = 0;
-
-    const bool isTypingCommand =
-        (currentUiMode == UiMode::Chat) &&
-        (!userInputBuffer.empty()) &&
-        (userInputBuffer[0] == '/');
-
-    if (isTypingCommand)
-    {
-        // Извлекаем только имя команды, исключая ведущий слэш и параметры
-        std::string_view commandView(userInputBuffer);
-        commandView.remove_prefix(1);
-
-        const size_t firstSpacePosition = commandView.find(' ');
-        const std::string_view typedCommandName = (firstSpacePosition == std::string_view::npos)
-            ? commandView : commandView.substr(0, firstSpacePosition);
-
-        std::unordered_set<std::string> processedCommands;
-        std::vector<CommandHintRow> potentialCandidates;
-        potentialCandidates.reserve(16);
-
-        // Ищем совпадения среди локальных команд
-        for (const SlashCommandMetadata& localCommand : getLocalSlashCommandsList())
-        {
-            if (checkStringStartsWithCaseInsensitive(localCommand.Name, typedCommandName) && processedCommands.insert(localCommand.Name).second)
-            {
-                potentialCandidates.push_back(CommandHintRow
-                    {
-                        .CommandString = "/" + localCommand.Name,
-                        .CommandDescription = localCommand.Description,
-                        .IsAddonCommand = false,
-                    });
-            }
-        }
-
-        // Ищем совпадения среди серверных команд (аддонов)
-        for (const std::string& addonCommand : cachedAddonCommands)
-        {
-            if (checkStringStartsWithCaseInsensitive(addonCommand, typedCommandName) && processedCommands.insert(addonCommand).second)
-            {
-                potentialCandidates.push_back(CommandHintRow
-                    {
-                        .CommandString = "/" + addonCommand,
-                        .CommandDescription = "addon",
-                        .IsAddonCommand = true,
-                    });
-            }
-        }
-
-        constexpr size_t maxAllowedHints = 8;
-        if (!potentialCandidates.empty())
-        {
-            // Сортируем подсказки по алфавиту
-            std::sort(potentialCandidates.begin(), potentialCandidates.end(), [](const CommandHintRow& itemA, const CommandHintRow& itemB)
-                {
-                    return itemA.CommandString < itemB.CommandString;
-                });
-
-            if (potentialCandidates.size() > maxAllowedHints)
-                potentialCandidates.resize(maxAllowedHints);
-
-            generatedHintLines = std::move(potentialCandidates);
-            reservedHintBoxLines = static_cast<int>(generatedHintLines.size()) + 2;
-        }
-    }
-
-    // --- Подготовка параметров сетки и буфера вывода ---
-    const int maximumMessageRows = static_cast<int>(max(0, terminalHeight - 6 - reservedHintBoxLines));
-    const int innerContainerWidth = static_cast<int>(max(4, terminalWidth - 4));
-
-    std::vector<Message> currentChatMessages;
-
-    if (isUserInActiveChat())
-        currentChatMessages = currentActiveChat.value()->Messages;
-
-    const int totalMessageCount = static_cast<int>(currentChatMessages.size());
-    const int startMessageIndex = (std::max)(0, totalMessageCount - maximumMessageRows - messageScrollOffset);
-
-    std::string outputBuffer;
-    outputBuffer.reserve(terminalWidth * terminalHeight * 4u + 256u);
-
-    // Скрываем курсор, очищаем экран, перемещаем каретку в начало и устанавливаем черный фон
-    outputBuffer.append("\x1b[?25l\x1b[2J\x1b[H\x1b[40m");
-
-    // Лямбда для создания горизонтального разделителя
-    auto generateHorizontalLine = [terminalWidth]()
-        {
-            std::string lineString;
-            lineString.reserve(static_cast<size_t>(terminalWidth));
-            lineString.push_back('+');
-            lineString.append(static_cast<size_t>(terminalWidth - 2), '-');
-            lineString.push_back('+');
-            return lineString;
-        };
-
-    const std::string displayedUsername = isUserLoggedIn() ? std::string(currentLoggedInUser->Name.buffer) : "not_logged";
-    const std::string displayedChatName = isUserInActiveChat() ? std::string(currentActiveChat.value()->ChatInfo.Name.buffer) : "no_chat";
-    const std::string inputPromptLabel = displayedUsername + "@" + displayedChatName + "> ";
-
-    // Автоматический переход в список чатов, если чат еще не выбран
-    if (currentUiMode == UiMode::Chat && isUserLoggedIn() && currentActiveChat.value() == &idleChatPlaceholder && !cachedChatList.empty())
-        currentUiMode = UiMode::ChatList;
-
-    // --- Отрисовка верхнего колонтитула ---
-    outputBuffer.append(getAnsiColorForeground(Color::DARK_CYAN))
-        .append(generateHorizontalLine())
-        .append(getAnsiResetStyle())
-        .push_back('\n');
-
-    {
-        std::string topHeaderRaw = isUserInActiveChat() ? ("Чат: " + std::string(currentActiveChat.value()->ChatInfo.Name.buffer)) : "TeleCrap";
-        topHeaderRaw = truncateUtf8StringByBytes(topHeaderRaw, static_cast<size_t>(innerContainerWidth));
-
-        outputBuffer.append("\x1b[90m|\x1b[0m")
-            .append(getAnsiColorForeground(Color::CYAN))
-            .append(topHeaderRaw)
-            .append(getAnsiResetStyle())
-            .append("\x1b[K\33[1000C|\n");
-    }
-
-    // --- Отрисовка основного контента (Список чатов ИЛИ Сообщения) ---
-    if (currentUiMode == UiMode::ChatList)
-    {
-        const int listItemsCount = static_cast<int>(cachedChatList.size());
-        const int visibleListItems = maximumMessageRows;
-        const int topListIndex = max(0, (std::min)(selectedChatListIndex - visibleListItems / 2, listItemsCount - visibleListItems));
-
-        for (int rowOffset = 0; rowOffset < maximumMessageRows; ++rowOffset)
-        {
-            const int currentItemIndex = topListIndex + rowOffset;
-            outputBuffer.append("\x1b[90m|\x1b[0m ");
-
-            if (currentItemIndex >= listItemsCount)
-            {
-                outputBuffer.append("\x1b[K\33[1000C|\n");
-                continue;
-            }
-
-            const Chat& listChatModel = cachedChatList[currentItemIndex];
-            const bool isItemSelected = (currentItemIndex == selectedChatListIndex);
-            std::string chatLineText = std::string(listChatModel.Name.buffer);
-
-            chatLineText = truncateUtf8StringByBytes(chatLineText, static_cast<size_t>(innerContainerWidth - 2));
-            const Color chatItemColor = (listChatModel.Type == ChatType::Direct) ? Color::MAGENTA : Color::CYAN;
-
-            if (isItemSelected)
-                outputBuffer.append("\x1b[7m");
-
-            outputBuffer.append(getAnsiColorForeground(chatItemColor))
-                .append("> ")
-                .append(chatLineText)
-                .append(getAnsiResetStyle());
-
-            if (isItemSelected)
-                outputBuffer.append(getAnsiResetStyle());
-
-            outputBuffer.append("\x1b[K\33[1000C|\n");
-        }
-    }
-    else
-    {
-        // Отрисовка сообщений чата
-        for (int rowOffset = 0; rowOffset < maximumMessageRows; ++rowOffset)
-        {
-            const int currentMessageIndex = startMessageIndex + rowOffset;
-            if (currentMessageIndex >= totalMessageCount)
-            {
-                outputBuffer.append("\x1b[90m|")
-                    .append(static_cast<size_t>(terminalWidth - 2), ' ')
-                    .append("\x1b[0m\33[1000C|\n");
-
-                continue;
-            }
-
-            const Message& messageModel = currentChatMessages[static_cast<size_t>(currentMessageIndex)];
-            std::string timeString = "[" + TerminalUI::platformGetTimeString(messageModel.Timestamp) + "] ";
-            std::string authorPrefix = std::string(messageModel.From.Name.buffer) + ": ";
-
-            Color timeStyleColor = Color::WHITE;
-            Color nameStyleColor = Color::YELLOW;
-            Color textStyleColor = Color::WHITE;
-
-            if (messageModel.From.Id == SYSTEM_FROMID)
-            {
-                timeStyleColor = Color::DARK_YELLOW;
-                nameStyleColor = Color::DARK_YELLOW;
-                textStyleColor = Color::DARK_YELLOW;
-            }
-            else if (currentLoggedInUser.has_value() && messageModel.From.Id == currentLoggedInUser->Id)
-            {
-                timeStyleColor = Color::CYAN;
-                nameStyleColor = Color::GREEN;
-            }
-            else
-            {
-                timeStyleColor = Color::CYAN;
-            }
-
-            std::string messageBodyText = messageModel.Text.buffer;
-            const size_t combinedPrefixLength = timeString.size() + authorPrefix.size();
-            size_t containerWidthSizeT = static_cast<size_t>(innerContainerWidth);
-
-            messageBodyText = truncateUtf8StringByBytes(messageBodyText, containerWidthSizeT > combinedPrefixLength ? containerWidthSizeT - combinedPrefixLength : 0) + " ";
-
-            outputBuffer.append("\x1b[90m|\x1b[0m ")
-                .append(getAnsiColorForeground(timeStyleColor))
-                .append(timeString)
-                .append(getAnsiResetStyle());
-
-            if (!authorPrefix.empty())
-            {
-                outputBuffer.append(getAnsiColorForeground(nameStyleColor))
-                    .append(authorPrefix)
-                    .append(getAnsiResetStyle());
-            }
-
-            outputBuffer.append(getAnsiColorForeground(textStyleColor))
-                .append(messageBodyText)
-                .append(getAnsiResetStyle())
-                .append("\x1b[K\33[1000C|\n");
-        }
-    }
-
-    // --- Отрисовка подсказок для команд (если есть) ---
-    if (reservedHintBoxLines > 0)
-    {
-        const int hintContentColumns = innerContainerWidth;
-        auto generateHintBorder = [&hintContentColumns]()
-            {
-                std::string borderString;
-                borderString.push_back('+');
-
-                if (hintContentColumns > 2)
-                    borderString.append(static_cast<size_t>(hintContentColumns - 2), '-');
-
-                if (hintContentColumns >= 2)
-                    borderString.push_back('+');
-
-                return borderString;
-            };
-
-        size_t longestCommandLength = 0;
-        for (const CommandHintRow& hintRow : generatedHintLines)
-            longestCommandLength = (std::max)(longestCommandLength, countUtf8Codepoints(hintRow.CommandString));
-
-        longestCommandLength = min(longestCommandLength + 2u, 22u);
-        outputBuffer.append("\x1b[90m|\x1b[0m ")
-            .append(getAnsiColorForeground(Color::DARK_GRAY))
-            .append(generateHintBorder())
-            .append(getAnsiResetStyle())
-            .append("\x1b[K\33[1000C|\n");
-
-        for (const CommandHintRow& hintRow : generatedHintLines)
-        {
-            const size_t currentCommandWidth = countUtf8Codepoints(hintRow.CommandString);
-            size_t paddingSpaces = (longestCommandLength > currentCommandWidth) 
-                ? (longestCommandLength - currentCommandWidth) : 1u;
-
-            const int availableDescriptionBudget = static_cast<int>(hintContentColumns - longestCommandLength + 1);
-            std::string commandDescriptionText = hintRow.CommandDescription;
-
-            if (availableDescriptionBudget > 0)
-            {
-                if (countUtf8Codepoints(commandDescriptionText) > availableDescriptionBudget)
-                {
-                    const size_t charactersToKeep = availableDescriptionBudget > 3 ? availableDescriptionBudget - 3 : availableDescriptionBudget;
-                    commandDescriptionText = extractMaxUtf8Codepoints(commandDescriptionText, charactersToKeep) + "...";
-                }
-            }
-            else
-            {
-                commandDescriptionText.clear();
-            }
-
-            outputBuffer.append("\x1b[90m|\x1b[0m ")
-                .append(getAnsiColorForeground(Color::YELLOW))
-                .append(hintRow.CommandString)
-                .append(getAnsiResetStyle());
-
-            for (size_t spaceIndex = 0; spaceIndex < paddingSpaces; ++spaceIndex)
-                outputBuffer.push_back(' ');
-
-            outputBuffer.append(getAnsiColorForeground(Color::DARK_GRAY))
-                .append(commandDescriptionText)
-                .append(getAnsiResetStyle())
-                .append("\x1b[K\33[1000C|\n");
-        }
-
-        outputBuffer.append("\x1b[90m|\x1b[0m ")
-            .append(getAnsiColorForeground(Color::DARK_GRAY))
-            .append(generateHintBorder())
-            .append(getAnsiResetStyle())
-            .append("\x1b[K\33[1000C|\n");
-    }
-
-    // --- Отрисовка строки ввода и нижнего статуса ---
-    outputBuffer.append(getAnsiColorForeground(Color::DARK_CYAN))
-        .append(generateHorizontalLine())
-        .append(getAnsiResetStyle())
-        .push_back('\n');
-
-    size_t activePromptLength = inputPromptLabel.size();
-    std::string safeDisplayInput = userInputBuffer;
-
-    if (activePromptLength + 3 > static_cast<size_t>(innerContainerWidth))
-    {
-        safeDisplayInput.clear();
-    }
-    else
-    {
-        const size_t maxInputAllowed = innerContainerWidth - activePromptLength;
-        if (safeDisplayInput.size() > maxInputAllowed)
-            safeDisplayInput = "..." + safeDisplayInput.substr(safeDisplayInput.size() - (maxInputAllowed - 3));
-
-    }
-
-    outputBuffer.append("\x1b[90m|\x1b[0m ")
-        .append(getAnsiColorForeground(Color::GREEN))
-        .append(inputPromptLabel)
-        .append(getAnsiResetStyle());
-
-    outputBuffer.append(getAnsiColorForeground(Color::WHITE))
-        .append(safeDisplayInput)
-        .append(getAnsiResetStyle())
-        .append("\x1b[K\33[1000C|\n");
-
-    outputBuffer.append(getAnsiColorForeground(Color::DARK_CYAN))
-        .append(generateHorizontalLine())
-        .append(getAnsiResetStyle())
-        .push_back('\n');
-
-    // --- Бейдж уведомлений о непрочитанных сообщениях ---
-    const uint32_t totalUnreadCountBadge = calculateTotalUnreadMessages();
-    std::string notificationBadgeCore;
-
-    if (totalUnreadCountBadge > 0)
-    {
-        notificationBadgeCore = "[" + std::to_string(totalUnreadCountBadge) + "] ";
-        if (unreadMessageCountByChatId.size() == 1)
-        {
-            notificationBadgeCore += truncateUtf8StringByBytes(unreadChatNamesByChatId[unreadMessageCountByChatId.begin()->first], 28);
-        }
-        else
-        {
-            notificationBadgeCore += std::to_string(unreadMessageCountByChatId.size()) + " \xD1\x87\xD0\xB0\xD1\x82\xD0\xBE\xD0\xB2"; // "чатов"
-        }
-    }
-
-    std::string leftStatusPanel = "| ESC — выход | /help | ";
-    if (!notificationBadgeCore.empty())
-    {
-        leftStatusPanel = truncateUtf8StringByBytes(
-            leftStatusPanel, max(6, terminalWidth - notificationBadgeCore.size() - 2));
-    }
-
-    outputBuffer.append(getAnsiColorForeground(Color::DARK_GRAY)).append(leftStatusPanel);
-    if (!notificationBadgeCore.empty())
-    {
-        char ansiPosition[40]{};
-        snprintf(
-            ansiPosition,
-            sizeof(ansiPosition),
-            "\x1b[%d;%dH",
-            static_cast<int>(terminalHeight),
-            max(2, terminalWidth - notificationBadgeCore.size() + 1));
-
-        outputBuffer.append(ansiPosition)
-            .append(getAnsiNotificationStyle())
-            .append(notificationBadgeCore)
-            .append(getAnsiResetStyle());
-    }
-
-    outputBuffer.append("\x1b[K\33[1000C|\n").append(getAnsiResetStyle());
-
-    // Возвращаем курсор обратно в строку ввода текста
-    char cursorPositionCommand[48]{};
-    snprintf(
-        cursorPositionCommand,
-        sizeof(cursorPositionCommand),
-        "\x1b[?25h\x1b[%d;%dH",
-        static_cast<int>(calculatedChatHeight + 3),
-        static_cast<int>(min(3 + activePromptLength + safeDisplayInput.size(), terminalWidth)));
-
-    outputBuffer.append(cursorPositionCommand);
-    TerminalUI::platformWriteStdout(outputBuffer);
-#endif
 }
 
 void TerminalUI::tryAuth(Transport* connectionSocket, std::string& inputUsername, std::string& inputPassword)
@@ -1437,6 +1061,7 @@ bool TerminalUI::processCommand(const std::string& userCommandString)
     if (commandTokens[0] == "/help")
     {
         addMessage("Доступные команды: /register, /login, /logout, /chat, /chats, /members, /create, /join, /refresh, /clear, /exit");
+        addMessage("В чате: ↑↓ — прокрутка истории сообщений, Shift+↑↓ — история введённых команд.");
         drawUI();
         return true;
     }
