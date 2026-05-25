@@ -1,14 +1,16 @@
 include(ExternalProject)
 
-add_library(telecrap_shared STATIC
-    Console.cpp
-    Log.cpp
-    Protocol.cpp
-    Request.cpp
-    Responce.cpp
-    SecureChannel.cpp
-    SocketHelper.cpp
-    Transport.cpp
+add_library(telecrap_shared STATIC)
+
+file(GLOB_RECURSE MODULES ./*.ixx)
+file(GLOB_RECURSE SOURCES ./*.cpp)
+
+target_sources(telecrap_shared
+    PRIVATE ${SOURCES}
+ "include/Telecrap.ixx")
+
+target_sources(telecrap_shared
+    PUBLIC FILE_SET CXX_MODULES FILES ${MODULES}
 )
 
 set(TELECRAP_BUNDLED_OPENSSL_ROOT "${CMAKE_SOURCE_DIR}/third-party/openssl-3.6.2")

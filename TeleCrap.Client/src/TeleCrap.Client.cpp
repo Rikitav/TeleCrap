@@ -24,9 +24,10 @@
 #include <telecrap/Console.h>
 #include <telecrap/Log.h>
 
-#include "../include/ini.h"
 #include "../include/TerminalUI.h"
 #include "../include/MemoryCache.h"
+
+import mINI;
 
 struct ClientSettings
 {

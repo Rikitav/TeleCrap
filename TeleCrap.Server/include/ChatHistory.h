@@ -1,6 +1,6 @@
 #pragma once
 
-#include <telecrap/Models.h>
+import telecrap;
 
 /// <summary>
 /// Серверная модель пользователя с полем хеша пароля.

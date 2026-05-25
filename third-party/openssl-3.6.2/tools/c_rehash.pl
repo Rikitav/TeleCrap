@@ -12,8 +12,8 @@
 # Perl c_rehash script, scan all files in a directory
 # and add symbolic links to their hash values.
 
-my $dir = "C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl";
-my $prefix = "C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install";
+my $dir = "C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl";
+my $prefix = "C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install";
 
 my $errorcount = 0;
 my $openssl = $ENV{OPENSSL} || "openssl";

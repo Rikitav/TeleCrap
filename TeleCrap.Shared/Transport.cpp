@@ -1,4 +1,4 @@
-#include "pch.h"
+module;
 
 #include <chrono>
 #include <cstdlib>
@@ -6,14 +6,28 @@
 #include <string>
 #include <thread>
 
-#include "telecrap/Transport.h"
-#include "telecrap/Protocol.h"
-#include "telecrap/SocketHelper.h"
-#include "telecrap/Models.h"
-#include "telecrap/Request.h"
-#include "telecrap/Responce.h"
-#include "telecrap/SecureChannel.h"
-#include "telecrap/Log.h"
+#ifdef _WIN32
+
+    // Windows
+    #include <WinSock2.h>
+    #include <Windows.h>
+    #include <ws2tcpip.h>
+
+    //#pragma comment(lib, "ws2_32.lib")
+#else
+
+    // Linux (POSIX)
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <cerrno>
+#endif
+
+module telecrap;
+
+using namespace telecrap;
 
 static void InitWsad()
 {

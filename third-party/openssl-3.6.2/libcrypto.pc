@@ -1,5 +1,5 @@
 # This file should be used when building against this OpenSSL build, and should never be installed
-prefix=C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2
+prefix=C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2
 exec_prefix=${prefix}
 libdir=${exec_prefix}
 includedir=${prefix}/include ${prefix}/./include 

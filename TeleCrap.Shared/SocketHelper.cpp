@@ -1,20 +1,17 @@
-﻿#include "pch.h"
+﻿module;
 
 #include <cctype>
 #include <stdexcept>
 #include <string>
 
-#ifndef _WIN32
-#include <netdb.h>
-#endif
-
-/*
 #ifdef _WIN32
+
     // Windows
     #include <WinSock2.h>
     #include <Windows.h>
-
+    #include <ws2tcpip.h>
 #else
+
     // Linux (POSIX)
     #include <sys/types.h>
     #include <sys/socket.h>
@@ -22,58 +19,43 @@
     #include <arpa/inet.h>
     #include <unistd.h>
     #include <cerrno>
+    #include <netdb.h>
 #endif
-*/
 
-#include "telecrap/SocketHelper.h"
-#include "telecrap/Request.h"
-#include "telecrap/Responce.h"
-#include "telecrap/Protocol.h"
+#undef SOCKET_ERROR
 
-static SOCKET openSocket()
+module telecrap;
+
+using namespace telecrap;
+
+static sockhandle_t openSocket()
 {
-    // сокет для прослушки (ожидания) клиента и сокет для работы с сеансом
-    // описываем (создаём) сокет для прослушки
-    //      AF_INET - тип адреса в виде IP+порт
-    //      SOCK_STREAM - тип сокета потоковый
-    //      IPPROTO_TCP - протокол TCP
-    return socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    return static_cast<sockhandle_t>(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
 }
 
 static sockaddr_in createAddress(const u_long ipAddress, const u_short port)
 {
-    // заполняем структуру с адресом
-    // !!! вот тут х.з. нужно ли под ARM вызывать функции htons() и htonl() - Host-To-Net-Short и Host-To-Net-Long
-    // !!! которые переставляют байты из "host" в "net" поледовательность (младший-старший)
-
-    // адрес, на котром  будем "слушать", тут сразу будет и IP, и порт
     sockaddr_in addr{};
-    addr.sin_family = AF_INET;          // тип нашего адреса в виде IP+порт
-    addr.sin_port = htons(port);        // порт
-    addr.sin_addr.s_addr = ipAddress;   // адрес
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = ipAddress;
 
     return addr;
 }
 
-static sockerr_t bindSocket(const SOCKET socket, sockaddr_in& addr)
+static ErrorCode bindSocket(const sockhandle_t socket, sockaddr_in& addr)
 {
-    // связываем ("биндим") сокет прослушки с адресом,
-    // т.е. иными словами открываем адрес для ожидания клиента
-    return bind(socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    return static_cast<ErrorCode>(bind(socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)));
 }
 
-static sockerr_t transportSocket(const SOCKET socket, int backlog)
+static ErrorCode transportSocket(const sockhandle_t socket, int backlog)
 {
-    // переводим сокет в режим ожидания клиента
-    // замечание - тут ещё не происходит блокировки, а только задаётся режим сокета
-    //       backlog - количество ождидаемых клиентов
-    return listen(socket, backlog);
+    return static_cast<ErrorCode>(listen(socket, backlog));
 }
 
-static sockerr_t connectSocket(const SOCKET socket, sockaddr_in& addr)
+static ErrorCode connectSocket(const sockhandle_t socket, sockaddr_in& addr)
 {
-    // подключаемся к серверу
-    return connect(socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+    return static_cast<ErrorCode>(connect(socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)));
 }
 
 u_long SocketHelper::ServerAddress = inet_addr("127.0.0.1");
@@ -117,23 +99,23 @@ bool SocketHelper::ResolveServerHost(const std::string& hostNameOrIPv4)
     return ok;
 }
 
-SOCKET SocketHelper::OpenHandshake()
+sockhandle_t SocketHelper::OpenHandshake()
 {
-    SOCKET listener = openSocket();
+    sockhandle_t listener = openSocket();
     if (listener < 0)
         throw std::runtime_error("Failed to create Handshake listener socket. Socket constructor returned negative descriptor.");
 
     // Listener bind'ится на INADDR_ANY: сервер слушает на всех интерфейсах.
     sockaddr_in addr = createAddress(htonl(INADDR_ANY), ServerPort);
-    sockerr_t err = bindSocket(listener, addr);
-    if (err != ERR_OK)
+    ErrorCode err = bindSocket(listener, addr);
+    if (err != ErrorCode::OK)
     {
         Close(&listener);
         throw std::runtime_error("Failed to bind Handshake listener socket");
     }
 
     err = transportSocket(listener, SOMAXCONN);
-    if (err != ERR_OK)
+    if (err != ErrorCode::OK)
     {
         Close(&listener);
         throw std::runtime_error("Failed to listen Handshake listener socket");
@@ -142,16 +124,16 @@ SOCKET SocketHelper::OpenHandshake()
     return listener;
 }
 
-SOCKET SocketHelper::ConnectHandshake()
+sockhandle_t SocketHelper::ConnectHandshake()
 {
-    SOCKET transport = openSocket();
+    sockhandle_t transport = openSocket();
     if (transport < 0)
         throw std::runtime_error("Failed to create Handshake listener socket. Socket constructor returned negative descriptor.");
 
     // Клиент подключается к ServerAddress:ServerPort (конфигурируется в клиенте).
     sockaddr_in addr = createAddress(ServerAddress, ServerPort);
-    sockerr_t err = connectSocket(transport, addr);
-    if (err != ERR_OK)
+    ErrorCode err = connectSocket(transport, addr);
+    if (err != ErrorCode::OK)
     {
 #ifdef _WIN32
         int lastError = WSAGetLastError();
@@ -173,12 +155,12 @@ SOCKET SocketHelper::ConnectHandshake()
     return transport;
 }
 
-std::string SocketHelper::PeerIdentificatorOf(const SOCKET* socketInfo)
+std::string SocketHelper::PeerIdentificatorOf(const sockhandle_t* socketInfo)
 {
     sockaddr_storage addr;
     socklen_t addrLen = sizeof(addr);
 
-    if (getpeername(*socketInfo, reinterpret_cast<sockaddr*>(&addr), &addrLen) == SOCKET_ERROR)
+    if (static_cast<ErrorCode>(getpeername(*socketInfo, reinterpret_cast<sockaddr*>(&addr), &addrLen)) == ErrorCode::SOCKET_ERROR)
         return "Unknown";
 
     char ipString[INET6_ADDRSTRLEN];
@@ -202,36 +184,36 @@ std::string SocketHelper::PeerIdentificatorOf(const SOCKET* socketInfo)
     return std::string(ipString);
 }
 
-u_long SocketHelper::PeerAddressOf(const SOCKET* socketInfo)
+u_long SocketHelper::PeerAddressOf(const sockhandle_t* socketInfo)
 {
     sockaddr_in peerAddr{};
     socklen_t addrSize = sizeof(peerAddr);
 
-    sockerr_t err = getpeername(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize);
-    if (err != ERR_OK)
+    ErrorCode err = static_cast<ErrorCode>(getpeername(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize));
+    if (err != ErrorCode::OK)
         return 0;
 
     return peerAddr.sin_addr.s_addr;
 }
 
-u_short SocketHelper::PeerPortOf(const SOCKET* socketInfo)
+u_short SocketHelper::PeerPortOf(const sockhandle_t* socketInfo)
 {
     sockaddr_in peerAddr{};
     socklen_t addrSize = sizeof(peerAddr);
 
-    sockerr_t err = getpeername(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize);
-    if (err != ERR_OK)
+    ErrorCode err = static_cast<ErrorCode>(getpeername(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize));
+    if (err != ErrorCode::OK)
         return 0;
 
     return peerAddr.sin_port;
 }
 
-std::string SocketHelper::SockIdentificatorOf(const SOCKET* socketInfo)
+std::string SocketHelper::SockIdentificatorOf(const sockhandle_t* socketInfo)
 {
     sockaddr_storage addr;
     socklen_t addrLen = sizeof(addr);
 
-    if (getsockname(*socketInfo, reinterpret_cast<sockaddr*>(&addr), &addrLen) == SOCKET_ERROR)
+    if (static_cast<ErrorCode>(getsockname(*socketInfo, reinterpret_cast<sockaddr*>(&addr), &addrLen)) == ErrorCode::SOCKET_ERROR)
         return "Unknown";
 
     char ipString[INET6_ADDRSTRLEN];
@@ -255,32 +237,32 @@ std::string SocketHelper::SockIdentificatorOf(const SOCKET* socketInfo)
     return std::string(ipString);
 }
 
-u_long SocketHelper::SockAddressOf(const SOCKET* socketInfo)
+u_long SocketHelper::SockAddressOf(const sockhandle_t* socketInfo)
 {
     sockaddr_in peerAddr{};
     socklen_t addrSize = sizeof(peerAddr);
 
-    sockerr_t err = getsockname(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize);
-    if (err != ERR_OK)
+    ErrorCode err = static_cast<ErrorCode>(getsockname(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize));
+    if (err != ErrorCode::OK)
         return 0;
 
     return peerAddr.sin_addr.s_addr;
 }
 
-u_short SocketHelper::SockPortOf(const SOCKET* socketInfo)
+u_short SocketHelper::SockPortOf(const sockhandle_t* socketInfo)
 {
     sockaddr_in peerAddr{};
     socklen_t addrSize = sizeof(peerAddr);
 
-    sockerr_t err = getsockname(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize);
-    if (err != ERR_OK)
+    ErrorCode err = static_cast<ErrorCode>(getsockname(*socketInfo, reinterpret_cast<sockaddr*>(&peerAddr), &addrSize));
+    if (err != ErrorCode::OK)
         return 0;
 
     return peerAddr.sin_port;
 }
 
 template<typename T>
-sockerr_t SocketHelper::SendData(const SOCKET* transportSocket, const T& buffer)
+ErrorCode SocketHelper::SendData(const sockhandle_t* transportSocket, const T& buffer)
 {
     // Надежная отправка: докидываем, пока не отправим sizeof(T) байт.
     // Это важно, потому что TCP send может отправить меньше запрошенного.
@@ -294,18 +276,18 @@ sockerr_t SocketHelper::SendData(const SOCKET* transportSocket, const T& buffer)
             bufferPtr + (sizeof(T) - toBeSent),
             toBeSent, 0);
 
-        if (bytesSent == SOCKET_ERROR)
+        if (static_cast<ErrorCode>(bytesSent) == ErrorCode::SOCKET_ERROR)
         {
 #ifdef _WIN32
-            int lastError = WSAGetLastError();
-            if (lastError == WSAECONNABORTED || lastError == WSAECONNRESET)
+            ErrorCode lastError = static_cast<ErrorCode>(WSAGetLastError());
+            if (lastError == ErrorCode::CONNABORTED || lastError == ErrorCode::CONNRESET)
                 throw disconnected_error();
 #else
             int lastError = errno;
             if (lastError == ECONNABORTED || lastError == ECONNRESET || lastError == EPIPE)
                 throw disconnected_error();
 #endif
-            return SOCKET_ERROR;
+            return ErrorCode::SOCKET_ERROR;
         }
 
         if (bytesSent == 0)
@@ -315,21 +297,21 @@ sockerr_t SocketHelper::SendData(const SOCKET* transportSocket, const T& buffer)
         continue;
     }
 
-    return ERR_OK;
+    return ErrorCode::OK;
 }
 
-template sockerr_t SocketHelper::SendData<Request>(const SOCKET* transportSocket, const Request& buffer);
-template sockerr_t SocketHelper::SendData<Responce>(const SOCKET* transportSocket, const Responce& buffer);
+template ErrorCode SocketHelper::SendData<Request>(const sockhandle_t* transportSocket, const Request& buffer);
+template ErrorCode SocketHelper::SendData<Responce>(const sockhandle_t* transportSocket, const Responce& buffer);
 
 template<typename T>
-sockerr_t SocketHelper::SendExactly(const SOCKET* transportSocket, const T& buffer)
+ErrorCode SocketHelper::SendExactly(const sockhandle_t* transportSocket, const T& buffer)
 {
     int sentBytes = send(
         *transportSocket,
         reinterpret_cast<const char*>(&buffer), 
         sizeof(T), 0);
 
-    if (sentBytes != SOCKET_ERROR)
+    if (static_cast<ErrorCode>(sentBytes) != ErrorCode::SOCKET_ERROR)
     {
         if (sentBytes == 0)
             throw disconnected_error();
@@ -340,7 +322,7 @@ sockerr_t SocketHelper::SendExactly(const SOCKET* transportSocket, const T& buff
         if (sentBytes != sizeof(T))
             throw std::runtime_error("sentBytes amount mismatch (expected - " + std::to_string(sizeof(T)) + ", got - " + std::to_string(sentBytes) + ")");
 
-        return ERR_OK;
+        return ErrorCode::OK;
     }
 
 #ifdef _WIN32
@@ -353,14 +335,14 @@ sockerr_t SocketHelper::SendExactly(const SOCKET* transportSocket, const T& buff
         throw disconnected_error();
 #endif
 
-    return SOCKET_ERROR;
+    return ErrorCode::FAULT;
 }
 
-template sockerr_t SocketHelper::SendExactly<Request>(const SOCKET* transportSocket, const Request& buffer);
-template sockerr_t SocketHelper::SendExactly<Responce>(const SOCKET* transportSocket, const Responce& buffer);
+template ErrorCode SocketHelper::SendExactly<Request>(const sockhandle_t* transportSocket, const Request& buffer);
+template ErrorCode SocketHelper::SendExactly<Responce>(const sockhandle_t* transportSocket, const Responce& buffer);
 
 template<typename T>
-sockerr_t SocketHelper::ReceiveData(const SOCKET* transportSocket, T& buffer)
+ErrorCode SocketHelper::ReceiveData(const sockhandle_t* transportSocket, T& buffer)
 {
 	int toBeReaded = sizeof(T);
 	char* bufferPtr = reinterpret_cast<char*>(&buffer);
@@ -372,18 +354,18 @@ sockerr_t SocketHelper::ReceiveData(const SOCKET* transportSocket, T& buffer)
             bufferPtr + (sizeof(T) - toBeReaded),
             toBeReaded, 0);
 
-        if (bytesRead == SOCKET_ERROR)
+        if (static_cast<ErrorCode>(bytesRead) == ErrorCode::SOCKET_ERROR)
         {
 #ifdef _WIN32
-            int lastError = WSAGetLastError();
-            if (lastError == WSAECONNABORTED || lastError == WSAECONNRESET)
+            ErrorCode lastError = static_cast<ErrorCode>(WSAGetLastError());
+            if (lastError == ErrorCode::CONNABORTED || lastError == ErrorCode::CONNRESET)
                 throw disconnected_error();
 #else
             int lastError = errno;
             if (lastError == ECONNABORTED || lastError == ECONNRESET || lastError == EPIPE)
                 throw disconnected_error();
 #endif
-            return SOCKET_ERROR;
+            return ErrorCode::SOCKET_ERROR;
         }
 
         if (bytesRead == 0)
@@ -393,21 +375,21 @@ sockerr_t SocketHelper::ReceiveData(const SOCKET* transportSocket, T& buffer)
         continue;
     }
 
-    return ERR_OK;
+    return ErrorCode::OK;
 }
 
-template sockerr_t SocketHelper::ReceiveData<Request>(const SOCKET* transportSocket, Request& buffer);
-template sockerr_t SocketHelper::ReceiveData<Responce>(const SOCKET* transportSocket, Responce& buffer);
+template ErrorCode SocketHelper::ReceiveData<Request>(const sockhandle_t* transportSocket, Request& buffer);
+template ErrorCode SocketHelper::ReceiveData<Responce>(const sockhandle_t* transportSocket, Responce& buffer);
 
 template<typename T>
-sockerr_t SocketHelper::ReceiveExactly(const SOCKET* transportSocket, T& buffer)
+ErrorCode SocketHelper::ReceiveExactly(const sockhandle_t* transportSocket, T& buffer)
 {
     int bytesRead = recv(
         *transportSocket,
         reinterpret_cast<char*>(&buffer),
-        sizeof(T), 0); // 0 - режим работы по умолчанию, есть и другие
+        sizeof(T), 0);
 
-    if (bytesRead != SOCKET_ERROR)
+    if (static_cast<ErrorCode>(bytesRead) != ErrorCode::SOCKET_ERROR)
     {
         if (bytesRead == 0)
             throw disconnected_error();
@@ -418,7 +400,7 @@ sockerr_t SocketHelper::ReceiveExactly(const SOCKET* transportSocket, T& buffer)
         if (bytesRead != sizeof(T))
             throw std::runtime_error("sentBytes amount mismatch (expected - " + std::to_string(sizeof(T)) + ", got - " + std::to_string(bytesRead) + ")");
 
-        return ERR_OK;
+        return ErrorCode::OK;
     }
 
 #ifdef _WIN32
@@ -431,13 +413,13 @@ sockerr_t SocketHelper::ReceiveExactly(const SOCKET* transportSocket, T& buffer)
         throw disconnected_error();
 #endif
 
-    return SOCKET_ERROR;
+    return ErrorCode::FAULT;
 }
 
-template sockerr_t SocketHelper::ReceiveExactly<Request>(const SOCKET* transportSocket, Request& buffer);
-template sockerr_t SocketHelper::ReceiveExactly<Responce>(const SOCKET* transportSocket, Responce& buffer);
+template ErrorCode SocketHelper::ReceiveExactly<Request>(const sockhandle_t* transportSocket, Request& buffer);
+template ErrorCode SocketHelper::ReceiveExactly<Responce>(const sockhandle_t* transportSocket, Responce& buffer);
 
-sockerr_t SocketHelper::SendBuffer(const SOCKET* transportSocket, const uint8_t* data, size_t size)
+ErrorCode SocketHelper::SendBuffer(const sockhandle_t* transportSocket, const uint8_t* data, size_t size)
 {
     size_t sent = 0;
     while (sent < size)
@@ -448,18 +430,18 @@ sockerr_t SocketHelper::SendBuffer(const SOCKET* transportSocket, const uint8_t*
             reinterpret_cast<const char*>(data + sent),
             chunk, 0);
 
-        if (bytesSent == SOCKET_ERROR)
+        if (static_cast<ErrorCode>(bytesSent) == ErrorCode::SOCKET_ERROR)
         {
 #ifdef _WIN32
-            int lastError = WSAGetLastError();
-            if (lastError == WSAECONNABORTED || lastError == WSAECONNRESET)
+            ErrorCode lastError = static_cast<ErrorCode>(WSAGetLastError());
+            if (lastError == ErrorCode::CONNABORTED || lastError == ErrorCode::CONNRESET)
                 throw disconnected_error();
 #else
             int lastError = errno;
             if (lastError == ECONNABORTED || lastError == ECONNRESET || lastError == EPIPE)
                 throw disconnected_error();
 #endif
-            return SOCKET_ERROR;
+            return ErrorCode::SOCKET_ERROR;
         }
 
         if (bytesSent == 0)
@@ -468,10 +450,10 @@ sockerr_t SocketHelper::SendBuffer(const SOCKET* transportSocket, const uint8_t*
         sent += static_cast<size_t>(bytesSent);
     }
 
-    return ERR_OK;
+    return ErrorCode::OK;
 }
 
-sockerr_t SocketHelper::ReceiveBuffer(const SOCKET* transportSocket, uint8_t* data, size_t size)
+ErrorCode SocketHelper::ReceiveBuffer(const sockhandle_t* transportSocket, uint8_t* data, size_t size)
 {
     size_t received = 0;
     while (received < size)
@@ -482,18 +464,18 @@ sockerr_t SocketHelper::ReceiveBuffer(const SOCKET* transportSocket, uint8_t* da
             reinterpret_cast<char*>(data + received),
             chunk, 0);
 
-        if (bytesRead == SOCKET_ERROR)
+        if (static_cast<ErrorCode>(bytesRead) == ErrorCode::SOCKET_ERROR)
         {
 #ifdef _WIN32
-            int lastError = WSAGetLastError();
-            if (lastError == WSAECONNABORTED || lastError == WSAECONNRESET)
+            ErrorCode lastError = static_cast<ErrorCode>(WSAGetLastError());
+            if (lastError == ErrorCode::CONNABORTED || lastError == ErrorCode::CONNRESET)
                 throw disconnected_error();
 #else
             int lastError = errno;
             if (lastError == ECONNABORTED || lastError == ECONNRESET || lastError == EPIPE)
                 throw disconnected_error();
 #endif
-            return SOCKET_ERROR;
+            return ErrorCode::SOCKET_ERROR;
         }
 
         if (bytesRead == 0)
@@ -502,10 +484,10 @@ sockerr_t SocketHelper::ReceiveBuffer(const SOCKET* transportSocket, uint8_t* da
         received += static_cast<size_t>(bytesRead);
     }
 
-    return ERR_OK;
+    return ErrorCode::OK;
 }
 
-void SocketHelper::Close(SOCKET* socketInfo)
+void SocketHelper::Close(sockhandle_t* socketInfo)
 {
     if (*socketInfo == 0)
         return;

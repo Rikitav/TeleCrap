@@ -1,10 +1,11 @@
-#include "pch.h"
+module;
 
 #include <string>
 #include <ctime>
 
-#include "telecrap/Models.h"
-#include "telecrap/Request.h"
+module telecrap;
+
+using namespace telecrap;
 
 Request Request::CreateHandshake(const connflag_t& flag)
 {

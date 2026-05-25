@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+﻿module;
 
 #include <clocale>
 #include <mutex>
@@ -11,17 +11,30 @@
 #include <map>
 #include <vector>
 
-#include "telecrap/Models.h"
-#include "telecrap/Protocol.h"
-#include "telecrap/Request.h"
-#include "telecrap/Responce.h"
-#include "telecrap/SocketHelper.h"
-#include "telecrap/Transport.h"
-#include "telecrap/Log.h"
-#include "telecrap/SecureChannel.h"
+#ifdef _WIN32
 
-static std::map<SOCKET, std::mutex> requestMutex;
-static std::map<SOCKET, const Transport*> secureSessionBySocket;
+    // Windows
+    #include <WinSock2.h>
+    #include <Windows.h>
+    #include <ws2tcpip.h>
+#else
+
+    // Linux (POSIX)
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+    #include <cerrno>
+    #include <netdb.h>
+#endif
+
+module telecrap;
+
+using namespace telecrap;
+
+static std::map<sockhandle_t, std::mutex> requestMutex;
+static std::map<sockhandle_t, const Transport*> secureSessionBySocket;
 
 struct SecureFrameHeader
 {
@@ -30,7 +43,7 @@ struct SecureFrameHeader
     std::uint8_t Tag[16];
 };
 
-static const Transport* getSecureTransport(const SOCKET* transportSocket)
+static const Transport* getSecureTransport(const sockhandle_t* transportSocket)
 {
     const auto it = secureSessionBySocket.find(*transportSocket);
     if (it == secureSessionBySocket.end())
@@ -60,29 +73,29 @@ static void sendSecureObject(const Transport* transport, const T& object)
     header.Counter = counter;
     std::memcpy(header.Tag, tag.data(), tag.size());
 
-    if (SocketHelper::SendBuffer(&transport->TransportSocket, reinterpret_cast<const std::uint8_t*>(&header), sizeof(header)) != ERR_OK)
-        throw request_error("Failed to send secure frame header", SOCKET_ERROR);
+    if (SocketHelper::SendBuffer(&transport->TransportSocket, reinterpret_cast<const std::uint8_t*>(&header), sizeof(header)) != ErrorCode::OK)
+        throw request_error("Failed to send secure frame header", ErrorCode::FAULT);
 
-    if (SocketHelper::SendBuffer(&transport->TransportSocket, ciphertext.data(), ciphertext.size()) != ERR_OK)
-        throw request_error("Failed to send secure frame payload", SOCKET_ERROR);
+    if (SocketHelper::SendBuffer(&transport->TransportSocket, ciphertext.data(), ciphertext.size()) != ErrorCode::OK)
+        throw request_error("Failed to send secure frame payload", ErrorCode::FAULT);
 }
 
 template <typename T>
 static T recvSecureObject(const Transport* transport)
 {
     SecureFrameHeader header{};
-    if (SocketHelper::ReceiveBuffer(&transport->TransportSocket, reinterpret_cast<std::uint8_t*>(&header), sizeof(header)) != ERR_OK)
-        throw request_error("Failed to receive secure frame header", SOCKET_ERROR);
+    if (SocketHelper::ReceiveBuffer(&transport->TransportSocket, reinterpret_cast<std::uint8_t*>(&header), sizeof(header)) != ErrorCode::OK)
+        throw request_error("Failed to receive secure frame header", ErrorCode::FAULT);
 
     if (header.CiphertextSize == 0 || header.CiphertextSize > 1u << 20)
-        throw request_error("Invalid secure frame size", SOCKET_ERROR);
+        throw request_error("Invalid secure frame size", ErrorCode::FAULT);
 
     std::vector<std::uint8_t> ciphertext(header.CiphertextSize);
-    if (SocketHelper::ReceiveBuffer(&transport->TransportSocket, ciphertext.data(), ciphertext.size()) != ERR_OK)
-        throw request_error("Failed to receive secure frame payload", SOCKET_ERROR);
+    if (SocketHelper::ReceiveBuffer(&transport->TransportSocket, ciphertext.data(), ciphertext.size()) != ErrorCode::OK)
+        throw request_error("Failed to receive secure frame payload", ErrorCode::FAULT);
 
     if (header.Counter != transport->Secure.RxCounter)
-        throw request_error("Secure counter mismatch", SOCKET_ERROR);
+        throw request_error("Secure counter mismatch", ErrorCode::FAULT);
 
     const std::vector<std::uint8_t> plaintext = SecureChannel::DecryptAead(
         transport->Secure.RxKey,
@@ -93,7 +106,7 @@ static T recvSecureObject(const Transport* transport)
 
     transport->Secure.RxCounter++;
     if (plaintext.size() != sizeof(T))
-        throw request_error("Secure plaintext size mismatch", SOCKET_ERROR);
+        throw request_error("Secure plaintext size mismatch", ErrorCode::FAULT);
 
     T out{};
     std::memcpy(&out, plaintext.data(), sizeof(T));
@@ -104,6 +117,7 @@ void Protocol::RegisterSecureSession(const Transport* transport)
 {
     if (transport == nullptr || !transport->Secure.Enabled)
         return;
+
     secureSessionBySocket[transport->TransportSocket] = transport;
 }
 
@@ -111,37 +125,32 @@ void Protocol::UnregisterSecureSession(const Transport* transport)
 {
     if (transport == nullptr)
         return;
+
     secureSessionBySocket.erase(transport->TransportSocket);
 }
 
-static sockerr_t acceptSocket(const SOCKET listener, SOCKET& socket)
+static ErrorCode acceptSocket(const sockhandle_t listener, sockhandle_t& socket)
 {
-    // получаем сокет для работы с клиентом
-    // это работает с блокировкой (синхронно), т.е. accept() завершится когда подключится клиент,
-    // ну или по оооочень большому таймауту выйдем с ошибкой, если клиента долго не будет
-    //      второй и третий параметры для переменной и её длины, в которую
-    //      вернётся адрес подключившегося клиента, но нам это безразлично, потому NULL и NULL
     socket = accept(listener, NULL, NULL);
-    return ERR_OK;
+    return ErrorCode::OK;
 }
 
 static token_t tokGen()
 {
-    // Токен используется как "session-like" маркер для клиента (AccessToken в Transport).
     thread_local std::random_device rd;
     thread_local std::mt19937_64 gen(rd());
     std::uniform_int_distribution<size_t> dist;
     return static_cast<token_t>(dist(gen));
 }
 
-Transport* Protocol::ListenHandshake(const SOCKET* transportSocket)
+Transport* Protocol::ListenHandshake(const sockhandle_t* transportSocket)
 {
     while (true)
     {
-        SOCKET clientTransport = 0;
+        sockhandle_t clientTransport = 0;
         try
         {
-            if (ERR_OK != acceptSocket(*transportSocket, clientTransport))
+            if (ErrorCode::OK != acceptSocket(*transportSocket, clientTransport))
             {
                 Log::Error("Handshake", "Failed to accept client transport socket");
                 continue;
@@ -236,10 +245,8 @@ Transport* Protocol::ListenHandshake(const SOCKET* transportSocket)
     }
 }
 
-Responce Protocol::SendRequest(const SOCKET* transportSocket, const Request& request)
+Responce Protocol::SendRequest(const sockhandle_t* transportSocket, const Request& request)
 {
-    // На один сокет допускается параллельная работа нескольких потоков (например, UI + updates),
-    // поэтому все send/recv операции сериализуем per-socket mutex'ом.
 	std::lock_guard<std::mutex> lock(requestMutex[*transportSocket]);
     if (const Transport* secureTransport = getSecureTransport(transportSocket); secureTransport != nullptr)
     {
@@ -248,24 +255,25 @@ Responce Protocol::SendRequest(const SOCKET* transportSocket, const Request& req
     }
     else
     {
-        sockerr_t err = SocketHelper::SendData(transportSocket, request);
-        if (err != ERR_OK)
+        ErrorCode err = SocketHelper::SendData(transportSocket, request);
+        if (err != ErrorCode::OK)
             throw request_error("Failed to send request.", err);
 
         Responce responce{};
         err = SocketHelper::ReceiveData(transportSocket, responce);
-        if (err != ERR_OK)
+        if (err != ErrorCode::OK)
             throw request_error("Failed to receive responce.", err);
 
         return responce;
     }
 }
 
-std::vector<Responce> Protocol::SendRequestList(const SOCKET* transportSocket, const Request& request, getRemainingFunc getRemaining)
+std::vector<Responce> Protocol::SendRequestList(const sockhandle_t* transportSocket, const Request& request, getRemainingFunc getRemaining)
 {
     std::lock_guard<std::mutex> lock(requestMutex[*transportSocket]);
-    sockerr_t err = ERR_OK;
+    ErrorCode err = ErrorCode::OK;
     Responce responce{};
+
     if (const Transport* secureTransport = getSecureTransport(transportSocket); secureTransport != nullptr)
     {
         sendSecureObject(secureTransport, request);
@@ -274,20 +282,19 @@ std::vector<Responce> Protocol::SendRequestList(const SOCKET* transportSocket, c
     else
     {
         err = SocketHelper::SendData(transportSocket, request);
-        if (err != ERR_OK)
+        if (err != ErrorCode::OK)
             throw request_error("Failed to send request.", err);
 
         err = SocketHelper::ReceiveData(transportSocket, responce);
-        if (err != ERR_OK)
+        if (err != ErrorCode::OK)
             throw request_error("Failed to receive responce.", err);
     }
     
     if (responce.Type == ResponceType::Error)
         throw request_error(responce);
 
-    // Контракт: remaining == -1 означает "пустой список" (нет элементов).
     std::vector<Responce> responces{};
-    if (getRemaining(responce) == -1)
+    if (getRemaining(responce) == NO_MORE_REMAINING)
         return responces;
 
     responces.push_back(responce);
@@ -300,7 +307,7 @@ std::vector<Responce> Protocol::SendRequestList(const SOCKET* transportSocket, c
         else
         {
             err = SocketHelper::ReceiveData(transportSocket, responce);
-            if (err != ERR_OK)
+            if (err != ErrorCode::OK)
                 throw request_error("Failed to receive responce.", err);
         }
 
@@ -313,7 +320,7 @@ std::vector<Responce> Protocol::SendRequestList(const SOCKET* transportSocket, c
     return responces;
 }
 
-void Protocol::SendResponce(const SOCKET* transportSocket, const Responce& responce)
+void Protocol::SendResponce(const sockhandle_t* transportSocket, const Responce& responce)
 {
     std::lock_guard<std::mutex> lock(requestMutex[*transportSocket]);
     if (const Transport* secureTransport = getSecureTransport(transportSocket); secureTransport != nullptr)
@@ -322,34 +329,36 @@ void Protocol::SendResponce(const SOCKET* transportSocket, const Responce& respo
     }
     else
     {
-        sockerr_t err = SocketHelper::SendData(transportSocket, responce);
-        if (err != ERR_OK)
+        ErrorCode err = SocketHelper::SendData(transportSocket, responce);
+        if (err != ErrorCode::OK)
             throw request_error("Failed to send responce.", err);
     }
 }
 
-Request Protocol::GetRequest(const SOCKET* transportSocket)
+Request Protocol::GetRequest(const sockhandle_t* transportSocket)
 {
     std::lock_guard<std::mutex> lock(requestMutex[*transportSocket]);
     if (const Transport* secureTransport = getSecureTransport(transportSocket); secureTransport != nullptr)
         return recvSecureObject<Request>(secureTransport);
 
     Request request{};
-    sockerr_t err = SocketHelper::ReceiveData(transportSocket, request);
-    if (err != ERR_OK)
+    ErrorCode err = SocketHelper::ReceiveData(transportSocket, request);
+    if (err != ErrorCode::OK)
         throw request_error("Failed to receive request.", err);
+    
     return request;
 }
 
-Responce Protocol::GetResponce(const SOCKET* transportSocket)
+Responce Protocol::GetResponce(const sockhandle_t* transportSocket)
 {
     std::lock_guard<std::mutex> lock(requestMutex[*transportSocket]);
     if (const Transport* secureTransport = getSecureTransport(transportSocket); secureTransport != nullptr)
         return recvSecureObject<Responce>(secureTransport);
 
     Responce responce{};
-    sockerr_t err = SocketHelper::ReceiveData(transportSocket, responce);
-    if (err != ERR_OK)
+    ErrorCode err = SocketHelper::ReceiveData(transportSocket, responce);
+    if (err != ErrorCode::OK)
         throw request_error("Failed to receive responce.", err);
+    
     return responce;
 }

@@ -1,4 +1,4 @@
-#include "pch.h"
+module;
 
 #include <cstring>
 #include <stdexcept>
@@ -7,7 +7,9 @@
 #include <openssl/kdf.h>
 #include <openssl/core_names.h>
 
-#include "telecrap/SecureChannel.h"
+module telecrap;
+
+using namespace telecrap;
 
 static std::array<std::uint8_t, 12> buildNonce(std::uint64_t counter)
 {

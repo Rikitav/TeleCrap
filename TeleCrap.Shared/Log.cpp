@@ -1,5 +1,4 @@
-#include "pch.h"
-#include "telecrap/Log.h"
+module;
 
 #include <chrono>
 #include <ctime>
@@ -8,17 +7,20 @@
 #include <mutex>
 #include <sstream>
 
+module telecrap;
+
+using namespace telecrap;
+
 std::mutex Log::logMutex;
-void(*Log::postWriteHook)() = nullptr;
 
 static const char* levelName(Log::Level lvl)
 {
 	switch (lvl)
 	{
 		case Log::Level::Error: return "ERROR";
-		case Log::Level::Info: return "INFO ";
+		case Log::Level::Info:  return "INFO ";
 		case Log::Level::Trace: return "TRACE";
-		default: return "?????";
+		default:				return "?????";
 	}
 }
 
@@ -70,26 +72,21 @@ void Log::Trace(std::string_view facility, std::string_view message)
 	write(Level::Trace, facility, message);
 }
 
-void Log::SetPostWriteHook(void(*hook)())
-{
-	std::lock_guard<std::mutex> lk(logMutex);
-	postWriteHook = hook;
-}
-
 void Log::write(Level level, std::string_view facility, std::string_view message)
 {
 	void(*hook)() = nullptr;
 	{
 		std::lock_guard<std::mutex> lk(logMutex);
-	std::cout
-		<< "\x1b[0m"
-		<< "\r\x1b[2K"
-		<< "[" << nowHHMMSS() << "] "
-		<< levelColor(level) << levelName(level) << "\x1b[0m"
-		<< " [" << facility << "] "
-		<< message
-		<< std::endl;
-		hook = postWriteHook;
+		std::cout
+			<< "\x1b[0m"
+			<< "\r\x1b[2K"
+			<< "[" << nowHHMMSS() << "] "
+			<< levelColor(level) << levelName(level) << "\x1b[0m"
+			<< " [" << facility << "] "
+			<< message
+			<< std::endl;
+
+		//hook = postWriteHook;
 	}
 
 	if (hook != nullptr)

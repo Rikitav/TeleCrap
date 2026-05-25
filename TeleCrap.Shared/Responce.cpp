@@ -1,8 +1,13 @@
-#include "pch.h"
-#include "telecrap/Models.h"
-#include "telecrap/Responce.h"
+module;
 
-Responce Responce::CreateError(const char* message, uint32_t errorCode)
+#include <cstdint>
+#include <memory>
+
+module telecrap;
+
+using namespace telecrap;
+
+Responce Responce::CreateError(const char* message, ErrorCode errorCode)
 {
 	Responce responce{};
 	responce.Type = ResponceType::Error;
@@ -12,7 +17,7 @@ Responce Responce::CreateError(const char* message, uint32_t errorCode)
 	return responce;
 }
 
-Responce Responce::CreateError(const std::string_view& message, uint32_t errorCode)
+Responce Responce::CreateError(const std::string_view& message, ErrorCode errorCode)
 {
 	Responce responce{};
 	responce.Type = ResponceType::Error;

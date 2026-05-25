@@ -1,17 +1,17 @@
 o_dir.c
-Примечание: включение файла:  C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\internal/e_os.h
-Примечание: включение файла:   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\limits.h
-Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\vcruntime.h
-Примечание: включение файла:     C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\sal.h
-Примечание: включение файла:      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\concurrencysal.h
-Примечание: включение файла:     C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\vadefs.h
-Примечание: включение файла:   C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/opensslconf.h
-Примечание: включение файла:    C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/configuration.h
-Примечание: включение файла:    C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/macros.h
-Примечание: включение файла:     C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/opensslv.h
-Примечание: включение файла:   C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/e_os2.h
-Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\stdint.h
-Примечание: включение файла:   C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/crypto.h
+Примечание: включение файла:  C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\internal/e_os.h
+Примечание: включение файла:   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\limits.h
+Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\vcruntime.h
+Примечание: включение файла:     C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\sal.h
+Примечание: включение файла:      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\concurrencysal.h
+Примечание: включение файла:     C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\vadefs.h
+Примечание: включение файла:   C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/opensslconf.h
+Примечание: включение файла:    C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/configuration.h
+Примечание: включение файла:    C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/macros.h
+Примечание: включение файла:     C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/opensslv.h
+Примечание: включение файла:   C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/e_os2.h
+Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\stdint.h
+Примечание: включение файла:   C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/crypto.h
 Примечание: включение файла:    C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\stdlib.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_malloc.h
@@ -23,21 +23,21 @@ o_dir.c
 Примечание: включение файла:    C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\stdio.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_wstdio.h
 Примечание: включение файла:      C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_stdio_config.h
-Примечание: включение файла:    C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/safestack.h
-Примечание: включение файла:     C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/stack.h
-Примечание: включение файла:    C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/types.h
-Примечание: включение файла:    C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/cryptoerr.h
-Примечание: включение файла:     C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/symhacks.h
-Примечание: включение файла:     C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/cryptoerr_legacy.h
-Примечание: включение файла:    C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/core.h
-Примечание: включение файла:     C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\openssl/types.h
-Примечание: включение файла:   C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\internal/numbers.h
+Примечание: включение файла:    C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/safestack.h
+Примечание: включение файла:     C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/stack.h
+Примечание: включение файла:    C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/types.h
+Примечание: включение файла:    C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/cryptoerr.h
+Примечание: включение файла:     C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/symhacks.h
+Примечание: включение файла:     C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/cryptoerr_legacy.h
+Примечание: включение файла:    C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/core.h
+Примечание: включение файла:     C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\openssl/types.h
+Примечание: включение файла:   C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\internal/numbers.h
 Примечание: включение файла:   C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\um\windows.h
 Примечание: включение файла:    C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\winapifamily.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\winpackagefamily.h
 Примечание: включение файла:    C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\sdkddkver.h
-Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\excpt.h
-Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\stdarg.h
+Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\excpt.h
+Примечание: включение файла:    C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\stdarg.h
 Примечание: включение файла:    C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\windef.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\minwindef.h
 Примечание: включение файла:      C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\specstrings.h
@@ -55,7 +55,7 @@ o_dir.c
 Примечание: включение файла:         C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_memory.h
 Примечание: включение файла:          C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_memcpy_s.h
 Примечание: включение файла:           C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\errno.h
-Примечание: включение файла:           C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\vcruntime_string.h
+Примечание: включение файла:           C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\vcruntime_string.h
 Примечание: включение файла:         C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_wstring.h
 Примечание: включение файла:       C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\pshpack4.h
 Примечание: включение файла:       C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\shared\poppack.h
@@ -154,9 +154,9 @@ o_dir.c
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_share.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_wio.h
 Примечание: включение файла:   C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\fcntl.h
-Примечание: включение файла:  C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\include\internal/o_dir.h
-Примечание: включение файла:  C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\crypto\LPdir_win32.c
-Примечание: включение файла:   C:\Users\gutii\source\repos\TeleCrap\third-party\openssl-3.6.2\crypto\LPdir_win.c
+Примечание: включение файла:  C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\include\internal/o_dir.h
+Примечание: включение файла:  C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\crypto\LPdir_win32.c
+Примечание: включение файла:   C:\Users\gutii\source\repos\Rikitav\TeleCrap\third-party\openssl-3.6.2\crypto\LPdir_win.c
 Примечание: включение файла:    C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\tchar.h
 Примечание: включение файла:     C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\wchar.h
 Примечание: включение файла:      C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_wconio.h
@@ -164,17 +164,17 @@ o_dir.c
 Примечание: включение файла:      C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\corecrt_wprocess.h
 Примечание: включение файла:      C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\sys/stat.h
 Примечание: включение файла:       C:\Program Files (x86)\Windows Kits\10\include\10.0.26100.0\ucrt\sys/types.h
-Примечание: включение файла:      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\intrin.h
-Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\intrin0.inl.h
-Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\setjmp.h
-Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\immintrin.h
-Примечание: включение файла:        C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\wmmintrin.h
-Примечание: включение файла:         C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\nmmintrin.h
-Примечание: включение файла:          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\smmintrin.h
-Примечание: включение файла:           C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\tmmintrin.h
-Примечание: включение файла:            C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\pmmintrin.h
-Примечание: включение файла:             C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\emmintrin.h
-Примечание: включение файла:              C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xmmintrin.h
-Примечание: включение файла:               C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\mmintrin.h
-Примечание: включение файла:        C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\zmmintrin.h
-Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\ammintrin.h
+Примечание: включение файла:      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\intrin.h
+Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\intrin0.inl.h
+Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\setjmp.h
+Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\immintrin.h
+Примечание: включение файла:        C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\wmmintrin.h
+Примечание: включение файла:         C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\nmmintrin.h
+Примечание: включение файла:          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\smmintrin.h
+Примечание: включение файла:           C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\tmmintrin.h
+Примечание: включение файла:            C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\pmmintrin.h
+Примечание: включение файла:             C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\emmintrin.h
+Примечание: включение файла:              C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xmmintrin.h
+Примечание: включение файла:               C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\mmintrin.h
+Примечание: включение файла:        C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\zmmintrin.h
+Примечание: включение файла:       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\ammintrin.h

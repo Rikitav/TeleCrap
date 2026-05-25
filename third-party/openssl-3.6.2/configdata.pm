@@ -247,8 +247,8 @@ our %config = (
     "openssl_sys_defines" => [
         "OPENSSL_SYS_WIN64A"
     ],
-    "openssldir" => "C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl",
-    "options" => "--prefix=C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install --openssldir=C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl no-acvp-tests no-afalgeng no-allocfail-tests no-asan no-brotli no-brotli-dynamic no-buildtest-c++ no-crypto-mdebug no-crypto-mdebug-backtrace no-demos no-devcryptoeng no-dynamic-engine no-ec_nistp_64_gcc_128 no-egd no-external-tests no-fips no-fips-jitter no-fips-post no-fips-securitychecks no-fuzz-afl no-fuzz-libfuzzer no-h3demo no-hqinterop no-jitter no-ktls no-lms no-loadereng no-md2 no-msan no-pie no-rc5 no-sctp no-shared no-ssl3 no-ssl3-method no-sslkeylog no-tests no-tfo no-trace no-ubsan no-unit-test no-uplink no-weak-ssl-ciphers no-zlib no-zlib-dynamic no-zstd no-zstd-dynamic",
+    "openssldir" => "C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl",
+    "options" => "--prefix=C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install --openssldir=C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl no-acvp-tests no-afalgeng no-allocfail-tests no-asan no-brotli no-brotli-dynamic no-buildtest-c++ no-crypto-mdebug no-crypto-mdebug-backtrace no-demos no-devcryptoeng no-dynamic-engine no-ec_nistp_64_gcc_128 no-egd no-external-tests no-fips no-fips-jitter no-fips-post no-fips-securitychecks no-fuzz-afl no-fuzz-libfuzzer no-h3demo no-hqinterop no-jitter no-ktls no-lms no-loadereng no-md2 no-msan no-pie no-rc5 no-sctp no-shared no-ssl3 no-ssl3-method no-sslkeylog no-tests no-tfo no-trace no-ubsan no-unit-test no-uplink no-weak-ssl-ciphers no-zlib no-zlib-dynamic no-zstd no-zstd-dynamic",
     "patch" => "2",
     "perl_archname" => "MSWin32-x64-multi-thread",
     "perl_cmd" => "C:\\Strawberry\\perl\\bin\\perl.exe",
@@ -257,8 +257,8 @@ our %config = (
         "VC-WIN64A",
         "no-shared",
         "no-tests",
-        "--prefix=C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install",
-        "--openssldir=C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl"
+        "--prefix=C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install",
+        "--openssldir=C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install/ssl"
     ],
     "perlenv" => {
         "AR" => undef,
@@ -297,7 +297,7 @@ our %config = (
         "__CNF_LDFLAGS" => undef,
         "__CNF_LDLIBS" => undef
     },
-    "prefix" => "C:/Users/gutii/source/repos/TeleCrap/out/build/x64-Debug/third-party/openssl/install",
+    "prefix" => "C:/Users/gutii/source/repos/Rikitav/TeleCrap/out/build/x64-Debug/third-party/openssl/install",
     "prerelease" => "",
     "processor" => "",
     "rc4_int" => "unsigned int",
@@ -320,7 +320,7 @@ our %target = (
     "LDFLAGS" => "/nologo /debug",
     "MT" => "mt",
     "MTFLAGS" => "-nologo",
-    "RANLIB" => "CODE(0x25e0e2fadc0)",
+    "RANLIB" => "CODE(0x251c4b5bd00)",
     "RC" => "rc",
     "_conf_fname_int" => [
         "Configurations\\00-base-templates.conf",
@@ -24837,8 +24837,8 @@ unless (caller) {
     use File::Copy;
     use Pod::Usage;
 
-    use lib 'C:/Users/gutii/source/repos/TeleCrap/third-party/openssl-3.6.2/util/perl';
-    use OpenSSL::fallback 'C:/Users/gutii/source/repos/TeleCrap/third-party/openssl-3.6.2/external/perl/MODULES.txt';
+    use lib 'C:/Users/gutii/source/repos/Rikitav/TeleCrap/third-party/openssl-3.6.2/util/perl';
+    use OpenSSL::fallback 'C:/Users/gutii/source/repos/Rikitav/TeleCrap/third-party/openssl-3.6.2/external/perl/MODULES.txt';
 
     my $here = dirname($0);
 
@@ -24865,7 +24865,7 @@ unless (caller) {
             );
 
         use lib '.';
-        use lib 'C:/Users/gutii/source/repos/TeleCrap/third-party/openssl-3.6.2/Configurations';
+        use lib 'C:/Users/gutii/source/repos/Rikitav/TeleCrap/third-party/openssl-3.6.2/Configurations';
         use gentemplate;
 
         open my $buildfile_template_fh, ">$buildfile_template"
@@ -24882,8 +24882,8 @@ unless (caller) {
 
         my $prepend = <<'_____';
 use File::Spec::Functions;
-use lib 'C:/Users/gutii/source/repos/TeleCrap/third-party/openssl-3.6.2/util/perl';
-use lib 'C:/Users/gutii/source/repos/TeleCrap/third-party/openssl-3.6.2/Configurations';
+use lib 'C:/Users/gutii/source/repos/Rikitav/TeleCrap/third-party/openssl-3.6.2/util/perl';
+use lib 'C:/Users/gutii/source/repos/Rikitav/TeleCrap/third-party/openssl-3.6.2/Configurations';
 use lib '.';
 use platform;
 _____

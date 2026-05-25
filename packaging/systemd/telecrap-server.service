@@ -1,0 +1,47 @@
+# TeleCrap — systemd unit (Linux)
+#
+# Установка (пример, пути при необходимости измените):
+#   sudo install -d -o root -g root /opt/telecrap
+#   sudo install -m755 build/TeleCrap.Server/TeleCrap_server /opt/telecrap/
+#   sudo cp -r TeleCrap.Server/addons /opt/telecrap/
+#   sudo install -m644 TeleCrap.Server/settings.cfg /opt/telecrap/
+#   sudo useradd --system --home /opt/telecrap --shell /usr/sbin/nologin telecrap
+#   sudo chown -R telecrap:telecrap /opt/telecrap
+#
+# В settings.cfg должны быть ключи секции [Server]: ListenPort, DbConnection
+# (путь к БД относительно WorkingDirectory, например telecrap.db).
+#
+#   sudo install -m644 packaging/systemd/telecrap-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now telecrap-server.service
+
+[Unit]
+Description=TeleCrap chat server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User=telecrap
+Group=telecrap
+
+# Рабочая директория: settings.cfg, каталог addons/, файл БД (см. DbConnection).
+WorkingDirectory=/opt/telecrap
+ExecStart=/opt/telecrap/TeleCrap_server
+
+# Процесс обрабатывает SIGINT (как Ctrl+C); по умолчанию systemd шлёт SIGTERM.
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=3
+
+# Раскомментируйте при большом числе одновременных клиентов:
+# LimitNOFILE=65535
+
+# Опционально: переменные без правки unit-файла
+# EnvironmentFile=-/etc/default/telecrap
+
+[Install]
+WantedBy=multi-user.target

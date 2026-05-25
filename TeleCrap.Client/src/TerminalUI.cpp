@@ -23,15 +23,11 @@
 #include "../include/TerminalUI.h"
 #include "../include/MemoryCache.h"
 
-#if defined(_WIN32)
-#include <curses.h>
-#else
-#include <ncurses.h>
-#endif
-
 #define ignore catch (...) {}
 #define max(a,b) (((a) > (b)) ? (a) : (b))
 #define min(a,b) (((a) < (b)) ? (a) : (b))
+
+import terminality;
 
 enum class UiMode
 {
@@ -719,6 +715,7 @@ void appendMessageToChatUnlocked(const Message& incomingMessage)
 // Основная функция отрисовки пользовательского интерфейса в терминал
 void renderInterfaceUnlocked()
 {
+    /*
     int terminalWidth = 0;
     int terminalHeight = 0;
     TerminalUI::platformGetScreenSize(terminalWidth, terminalHeight);
@@ -950,7 +947,12 @@ void renderInterfaceUnlocked()
     int cursorX = static_cast<int>((std::min)(static_cast<size_t>(terminalWidth - 1), 2 + activePromptLength + safeDisplayInput.size()));
     move(cursorY, cursorX);
     refresh();
-    return;
+    */
+}
+
+void TerminalUI::run(Transport* transportSocket)
+{
+
 }
 
 void TerminalUI::tryAuth(Transport* connectionSocket, std::string& inputUsername, std::string& inputPassword)
